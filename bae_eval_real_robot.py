@@ -1,3 +1,5 @@
+#!/home/vision/anaconda3/envs/robodiff/bin/python
+
 """
 Usage:
 (robodiff)$ python eval_real_robot.py -i <ckpt_path> -o <save_dir> --robot_ip <ip_of_ur5>
