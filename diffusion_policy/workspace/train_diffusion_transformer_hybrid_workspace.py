@@ -43,17 +43,17 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
         np.random.seed(seed)
         random.seed(seed)
 
-        # configure model
+        # configure model; Policy 정의
         self.model: DiffusionTransformerHybridImagePolicy = hydra.utils.instantiate(cfg.policy)
-
+        # EMA 모델 정의
         self.ema_model: DiffusionTransformerHybridImagePolicy = None
         if cfg.training.use_ema:
             self.ema_model = copy.deepcopy(self.model)
 
-        # configure training state
+        # configure training state; Optimizer 정의
         self.optimizer = self.model.get_optimizer(**cfg.optimizer)
 
-        # configure training state
+        # configure training state; step, epoch수 관리
         self.global_step = 0
         self.epoch = 0
 
@@ -67,7 +67,7 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
                 print(f"Resuming from checkpoint {lastest_ckpt_path}")
                 self.load_checkpoint(path=lastest_ckpt_path)
 
-        # configure dataset
+        # configure dataset; Dataset 받아오기
         dataset: BaseImageDataset
         dataset = hydra.utils.instantiate(cfg.task.dataset)
         assert isinstance(dataset, BaseImageDataset)
@@ -149,6 +149,7 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
         # training loop
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
         with JsonLogger(log_path) as json_logger:
+            # Epoch 루프
             for local_epoch_idx in range(cfg.training.num_epochs):
                 step_log = dict()
                 # ========= train for this epoch ==========

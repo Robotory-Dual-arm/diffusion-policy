@@ -80,7 +80,7 @@ def get_optimal_chunks(shape, dtype,
     # print(np.prod(chunks) * itemsize / target_chunk_bytes)
     return chunks
 
-
+# 데이터 불러오기 or 저장 등 데이터 관리
 class ReplayBuffer:
     """
     Zarr-based temporal datastructure.
@@ -165,6 +165,7 @@ class ReplayBuffer:
                 else:
                     meta[key] = value[:]
 
+            # keys가 안 주어지면, data 폴더에 모든 keys들 긁어옴
             if keys is None:
                 keys = src_root['data'].keys()
             data = dict()
@@ -335,6 +336,7 @@ class ReplayBuffer:
         return cks
     
     # ============= properties =================
+    # self.data에 root['data'] 저장
     @cached_property
     def data(self):
         return self.root['data']
@@ -369,6 +371,7 @@ class ReplayBuffer:
         
         return meta_group
     
+    # episode가 끝나는 지점들의 idx
     @property
     def episode_ends(self):
         return self.meta['episode_ends']
@@ -403,6 +406,7 @@ class ReplayBuffer:
         else:
             return super().__repr__()
 
+    # data안에 action, state, image ... key 인자들
     def keys(self):
         return self.data.keys()
     

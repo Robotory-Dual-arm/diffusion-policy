@@ -43,12 +43,12 @@ class PoseTrajectoryInterpolator:
                 axis=0, assume_sorted=True)
             self.rot_interp = st.Slerp(times, rot)
     
-    @property
+    @property   # self.times
     def times(self) -> np.ndarray:
         if self.single_step:
             return self._times
         else:
-            return self.pos_interp.x
+            return self.pos_interp.x   # times
     
     @property
     def poses(self) -> np.ndarray:
@@ -57,11 +57,11 @@ class PoseTrajectoryInterpolator:
         else:
             n = len(self.times)
             poses = np.zeros((n, 6))
-            poses[:,:3] = self.pos_interp.y
-            poses[:,3:] = self.rot_interp(self.times).as_rotvec()
+            poses[:,:3] = self.pos_interp.y   # pos
+            poses[:,3:] = self.rot_interp(self.times).as_rotvec()   # rot
             return poses
 
-    def trim(self, 
+    def trim(self,   # start_t에서 end_t까지의 구간을 잘라냄
             start_t: float, end_t: float
             ) -> "PoseTrajectoryInterpolator":
         assert start_t <= end_t
@@ -103,7 +103,7 @@ class PoseTrajectoryInterpolator:
         return final_interp
 
     def schedule_waypoint(self,
-            pose, time, 
+            pose, time,   # target pose, target time
             max_pos_speed=np.inf, 
             max_rot_speed=np.inf,
             curr_time=None,
@@ -180,7 +180,7 @@ class PoseTrajectoryInterpolator:
         times = np.append(trimmed_interp.times, [last_waypoint_time], axis=0)
         poses = np.append(trimmed_interp.poses, [pose], axis=0)
 
-        # create new interpolator
+        # create new interpolator; 새로 만들기
         final_interp = PoseTrajectoryInterpolator(times, poses)
         return final_interp
 
@@ -193,7 +193,7 @@ class PoseTrajectoryInterpolator:
         
         pose = np.zeros((len(t), 6))
         if self.single_step:
-            pose[:] = self._poses[0]
+            pose[:] = self._poses[0]   # [x,y,z,rx,ry,rz]
         else:
             start_time = self.times[0]
             end_time = self.times[-1]
@@ -205,4 +205,5 @@ class PoseTrajectoryInterpolator:
 
         if is_single:
             pose = pose[0]
-        return pose
+        return pose   # single이면 [x,y,z,rx,ry,rz]
+                      # multi면 [[x,y,z,rx,ry,rz], [ ~ ] ... ]

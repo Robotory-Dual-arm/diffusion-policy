@@ -42,7 +42,7 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             causal_attn=True,
             time_as_cond=True,
             obs_as_cond=True,
-            pred_action_steps_only=False,
+            pred_action_steps_only=False,   # 실제 실행할 action만 예측할거냐
             # parameters passed to step
             **kwargs):
         super().__init__()
@@ -50,7 +50,7 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         # parse shape_meta
         action_shape = shape_meta['action']['shape']
         assert len(action_shape) == 1
-        action_dim = action_shape[0]
+        action_dim = action_shape[0]   
         obs_shape_meta = shape_meta['obs']
         obs_config = {
             'low_dim': [],
@@ -187,16 +187,17 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             # keyword arguments to scheduler.step
             **kwargs
             ):
-        model = self.model
+        model = self.model   # Transformer model
         scheduler = self.noise_scheduler
 
+        # 랜덤 trajectory 생성
         trajectory = torch.randn(
             size=condition_data.shape, 
             dtype=condition_data.dtype,
             device=condition_data.device,
             generator=generator)
     
-        # set step values
+        # set step values; scheduler.timestep 생성
         scheduler.set_timesteps(self.num_inference_steps)
 
         for t in scheduler.timesteps:
@@ -204,7 +205,7 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             trajectory[condition_mask] = condition_data[condition_mask]
 
             # 2. predict model output
-            model_output = model(trajectory, t, cond)
+            model_output = model(trajectory, t, cond)   # Transformer
 
             # 3. compute previous image: x_t -> x_t-1
             trajectory = scheduler.step(
@@ -216,10 +217,10 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         # finally make sure conditioning is enforced
         trajectory[condition_mask] = condition_data[condition_mask]        
 
-        return trajectory
+        return trajectory   # 최종 trajectory
 
 
-    def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:   
         """
         obs_dict: must include "obs" key
         result: must include "action" key
@@ -242,17 +243,18 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         cond = None
         cond_data = None
         cond_mask = None
-        if self.obs_as_cond:
+        if self.obs_as_cond:   # obs를 Transformer에 condition으로 따로줌
             this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:]))
             nobs_features = self.obs_encoder(this_nobs)
             # reshape back to B, To, Do
             cond = nobs_features.reshape(B, To, -1)
             shape = (B, T, Da)
-            if self.pred_action_steps_only:
+            if self.pred_action_steps_only:   # False
                 shape = (B, self.n_action_steps, Da)
             cond_data = torch.zeros(size=shape, device=device, dtype=dtype)
             cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
-        else:
+
+        else:   # obs를 Transformer에 input으로 같이 들어감
             # condition through impainting
             this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:]))
             nobs_features = self.obs_encoder(this_nobs)
@@ -262,9 +264,9 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             cond_data = torch.zeros(size=shape, device=device, dtype=dtype)
             cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
             cond_data[:,:To,Da:] = nobs_features
-            cond_mask[:,:To,Da:] = True
+            cond_mask[:,:To,Da:] = True   # obs와 action이후 dimension은 masking
 
-        # run sampling
+        # run sampling; Denoising후 trajectory
         nsample = self.conditional_sample(
             cond_data, 
             cond_mask,
@@ -272,20 +274,20 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             **self.kwargs)
         
         # unnormalize prediction
-        naction_pred = nsample[...,:Da]
-        action_pred = self.normalizer['action'].unnormalize(naction_pred)
+        naction_pred = nsample[...,:Da]   # action부분만 사용
+        action_pred = self.normalizer['action'].unnormalize(naction_pred)   # 정규화 풀기
 
         # get action
-        if self.pred_action_steps_only:
+        if self.pred_action_steps_only:   # False
             action = action_pred
         else:
             start = To - 1
             end = start + self.n_action_steps
-            action = action_pred[:,start:end]
+            action = action_pred[:,start:end]   # 실제 실행할 action만 추출
         
         result = {
-            'action': action,
-            'action_pred': action_pred
+            'action': action,   # 실제 사용할 traj
+            'action_pred': action_pred   # 예측한 전체 traj
         }
         return result
 

@@ -64,6 +64,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
     steps_per_inference, max_duration,
     frequency, command_latency):
     # load match_dataset
+    # 과거 데이터 영상을 오버레이해서 비교하기 위한 용도
     match_camera_idx = 0
     episode_first_frame_map = dict()
     if match_dataset is not None:
@@ -230,7 +231,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                         # Exit program
                         env.end_episode()
                         exit(0)
-                    elif key_stroke == ord('c'):
+                    elif key_stroke == ord('c'):   # 'c' 누르면 human loop나가고 policy loop 시작
                         # Exit human control loop
                         # hand control over to the policy
                         break

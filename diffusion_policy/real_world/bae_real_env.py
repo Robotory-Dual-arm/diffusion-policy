@@ -18,12 +18,21 @@ from diffusion_policy.common.replay_buffer import ReplayBuffer
 from diffusion_policy.common.cv2_util import (
     get_image_transform, optimal_row_cols)
 
+# DEFAULT_OBS_KEY_MAP = {    # 바꾸기!
+#     # robot
+#     'ActualTCPPose': 'robot_eef_pose',
+#     'ActualTCPSpeed': 'robot_eef_pose_vel',
+#     'ActualQ': 'robot_joint',
+#     'ActualQd': 'robot_joint_vel',
+#     # timestamps
+#     'step_idx': 'step_idx',
+#     'timestamp': 'timestamp'
+# }
 DEFAULT_OBS_KEY_MAP = {
     # robot
-    'ActualTCPPose': 'robot_eef_pose',
-    'ActualTCPSpeed': 'robot_eef_pose_vel',
-    'ActualQ': 'robot_joint',
-    'ActualQd': 'robot_joint_vel',
+    'robot_eef_pos': 'robot_eef_pos',
+    'robot_eef_quat': 'robot_eef_quat',
+    'robot_gripper_qpos': 'robot_gripper_qpos',
     # timestamps
     'step_idx': 'step_idx',
     'timestamp': 'timestamp'
@@ -32,32 +41,32 @@ DEFAULT_OBS_KEY_MAP = {
 class RealEnv:
     def __init__(self, 
             # required params
-            output_dir,
-            robot_ip,
+            output_dir,   # 없애기!
+            robot_ip,   
             # env params
-            frequency=10,
+            frequency=20,
             n_obs_steps=2,
             # obs
             obs_image_resolution=(640,480),
             max_obs_buffer_size=30,
             camera_serial_numbers=None,
-            obs_key_map=DEFAULT_OBS_KEY_MAP,
+            obs_key_map=DEFAULT_OBS_KEY_MAP,   # 바꾸기!
             obs_float32=False,
             # action
             max_pos_speed=0.25,
             max_rot_speed=0.6,
             # robot
-            tcp_offset=0.13,
+            tcp_offset=0.13,   
             init_joints=False,
             # video capture params
             video_capture_fps=30,
             video_capture_resolution=(1280,720),
             # saving params
-            record_raw_video=True,
+            record_raw_video=False,   # raw 영상 저장 안함 (obs 영상 저장)
             thread_per_video=2,
             video_crf=21,
             # vis params
-            enable_multi_cam_vis=True,
+            enable_multi_cam_vis=False,   # 실시간 시각화 안함
             multi_cam_vis_resolution=(1280,720),
             # shared memory
             shm_manager=None
@@ -76,9 +85,12 @@ class RealEnv:
         if shm_manager is None:
             shm_manager = SharedMemoryManager()
             shm_manager.start()
+        # 리스트로 나옴; camera_serial_numbers = [ ~ , ~, ...]
         if camera_serial_numbers is None:
             camera_serial_numbers = SingleRealsense.get_connected_devices_serial()
 
+
+        # observation용 해상도 변환
         color_tf = get_image_transform(
             input_res=video_capture_resolution,
             output_res=obs_image_resolution, 
@@ -92,7 +104,9 @@ class RealEnv:
             data['color'] = color_transform(data['color'])
             return data
         
-        rw, rh, col, row = optimal_row_cols(
+
+        # 실시간 시각화용 해상도 변환
+        rw, rh, col, row = optimal_row_cols(   # grid로 멀티 영상 띄우기
             n_cameras=len(camera_serial_numbers),
             in_wh_ratio=obs_image_resolution[0]/obs_image_resolution[1],
             max_resolution=multi_cam_vis_resolution
@@ -106,14 +120,18 @@ class RealEnv:
             data['color'] = vis_color_transform(data['color'])
             return data
 
+
+        # 비디오 녹화 관련 변수
+        # raw 영상 녹화
         recording_transfrom = None
         recording_fps = video_capture_fps
         recording_pix_fmt = 'bgr24'
-        if not record_raw_video:
+        # obs 영상 녹화
+        if not record_raw_video:   # not False = True
             recording_transfrom = transform
             recording_fps = frequency
             recording_pix_fmt = 'rgb24'
-
+        # 비디오 끌수 있는 방법좀 찾아!
         video_recorder = VideoRecorder.create_h264(
             fps=recording_fps, 
             codec='h264',
@@ -121,6 +139,7 @@ class RealEnv:
             crf=video_crf,
             thread_type='FRAME',
             thread_count=thread_per_video)
+
 
         # 카메라; shared memory 사용
         realsense = MultiRealsense(
@@ -144,8 +163,9 @@ class RealEnv:
             verbose=False
             )
         
+
         multi_cam_vis = None
-        if enable_multi_cam_vis:
+        if enable_multi_cam_vis:   # False; 시각화 안함
             multi_cam_vis = MultiCameraVisualizer(
                 realsense=realsense,
                 row=row,
@@ -153,16 +173,18 @@ class RealEnv:
                 rgb_to_bgr=False
             )
 
+
         cube_diag = np.linalg.norm([1,1,1])
         j_init = np.array([0,-90,-90,-90,90,0]) / 180 * np.pi
-        if not init_joints:
+        if not init_joints:   # not False = True
             j_init = None
 
-        # 로봇; shared memory 사용
+
+        # 로봇 객체
         robot = RTDEInterpolationController(
             shm_manager=shm_manager,
             robot_ip=robot_ip,
-            frequency=125, # UR5 CB3 RTDE
+            frequency=125, # UR5 CB3 RTDE; 바꾸기!
             lookahead_time=0.1,
             gain=300,
             max_pos_speed=max_pos_speed*cube_diag,
@@ -171,7 +193,7 @@ class RealEnv:
             tcp_offset_pose=[0,0,tcp_offset,0,0,0],
             payload_mass=None,
             payload_cog=None,
-            joints_init=j_init,
+            joints_init=j_init,   # None
             joints_init_speed=1.05,
             soft_real_time=False,
             verbose=False,
@@ -208,7 +230,7 @@ class RealEnv:
     
     def start(self, wait=True):
         self.realsense.start(wait=False)
-        self.robot.start(wait=False)
+        self.robot.start(wait=False)   # 여기서 robot.run() 돌아감!!!!
         if self.multi_cam_vis is not None:
             self.multi_cam_vis.start(wait=False)
         if wait:
@@ -223,27 +245,28 @@ class RealEnv:
         if wait:
             self.stop_wait()
 
-    def start_wait(self):
+    def start_wait(self):   # 다른 프로세스들을 기다림
         self.realsense.start_wait()
-        self.robot.start_wait()
+        self.robot.start_wait()   
         if self.multi_cam_vis is not None:
             self.multi_cam_vis.start_wait()
     
-    def stop_wait(self):
+    def stop_wait(self):   # 다른 프로세스들을 기다림
         self.robot.stop_wait()
         self.realsense.stop_wait()
         if self.multi_cam_vis is not None:
             self.multi_cam_vis.stop_wait()
 
     # ========= context manager ===========
-    def __enter__(self):
+    def __enter__(self):   # 여기서 robot.run() 돌아감; with문이 시작될때 자동 실행됨!! 미쳤나
         self.start()
         return self
     
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb):   
         self.stop()
 
     # ========= async env API ===========
+    # observation 얻기
     def get_obs(self) -> dict:
         "observation dict"
         assert self.is_ready
@@ -256,7 +279,7 @@ class RealEnv:
             out=self.last_realsense_data)
 
         # 125 hz, robot_receive_timestamp
-        last_robot_data = self.robot.get_all_state()
+        last_robot_data = self.robot.get_all_state()   
         # both have more than n_obs_steps data
 
         # align camera obs timestamps
@@ -264,6 +287,7 @@ class RealEnv:
         last_timestamp = np.max([x['timestamp'][-1] for x in self.last_realsense_data.values()])
         obs_align_timestamps = last_timestamp - (np.arange(self.n_obs_steps)[::-1] * dt)
 
+        # 카메라 obs 데이터 얻기
         camera_obs = dict()
         for camera_idx, value in self.last_realsense_data.items():
             this_timestamps = value['timestamp']
@@ -277,6 +301,7 @@ class RealEnv:
             # remap key
             camera_obs[f'camera_{camera_idx}'] = value['color'][this_idxs]
 
+        # 로봇 obs 데이터 얻기
         # align robot obs
         robot_timestamps = last_robot_data['robot_receive_timestamp']
         this_timestamps = robot_timestamps
@@ -288,6 +313,12 @@ class RealEnv:
                 this_idx = is_before_idxs[-1]
             this_idxs.append(this_idx)
 
+        # robot_obs_raw = {
+        # 'robot_eef_pos': ~ ,
+        # 'robot_eef_quat': ~ ,
+        # 'robot_gripper_qpos': ~ 
+        # }
+
         robot_obs_raw = dict()
         for k, v in last_robot_data.items():
             if k in self.obs_key_map:
@@ -297,7 +328,7 @@ class RealEnv:
         for k, v in robot_obs_raw.items():
             robot_obs[k] = v[this_idxs]
 
-        # accumulate obs
+        # accumulate obs; Accumulator 사용
         if self.obs_accumulator is not None:
             self.obs_accumulator.put(
                 robot_obs_raw,
@@ -331,14 +362,14 @@ class RealEnv:
         new_timestamps = timestamps[is_new]
         new_stages = stages[is_new]
 
-        # schedule waypoints
+        # schedule waypoints; input_queue에 waypoint 쌓기
         for i in range(len(new_actions)):
             self.robot.schedule_waypoint(
                 pose=new_actions[i],
                 target_time=new_timestamps[i]
             )
         
-        # record actions
+        # record actions; Accumulator 사용
         if self.action_accumulator is not None:
             self.action_accumulator.put(
                 new_actions,

@@ -22,6 +22,7 @@ def test():
         examples=example,
         buffer_size=3
     )
+    # get해도 Empty로 되어있어야함
     raised = False
     try:
         queue.get()
@@ -33,8 +34,8 @@ def test():
         'cmd': 1,
         'pose': np.ones((6,))
     }
-    queue.put(data)
-    result = queue.get()
+    queue.put(data)   # queue에 넣기
+    result = queue.get()   # queue 내부값들 가져오기
     assert result['cmd'] == data['cmd']
     assert np.allclose(result['pose'], data['pose'])
 

@@ -65,10 +65,10 @@ class ConditionalResidualBlock1D(nn.Module):
         out = out + self.residual_conv(x)
         return out
 
-
+# conditional U-Net -> FiLM
 class ConditionalUnet1D(nn.Module):
     def __init__(self, 
-        input_dim,
+        input_dim,   # action + obs 의 dimension
         local_cond_dim=None,
         global_cond_dim=None,
         diffusion_step_embed_dim=256,

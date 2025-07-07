@@ -26,7 +26,7 @@ class BaseLowdimDataset(torch.utils.data.Dataset):
         """
         raise NotImplementedError()
 
-
+# 추상기반 class : 아래 함수들을 자식 class에서 구현해야함
 class BaseImageDataset(torch.utils.data.Dataset):
     def get_validation_dataset(self) -> 'BaseLowdimDataset':
         # return an empty dataset by default

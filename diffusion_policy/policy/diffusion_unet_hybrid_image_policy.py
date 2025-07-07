@@ -23,15 +23,15 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
     def __init__(self, 
             shape_meta: dict,
             noise_scheduler: DDPMScheduler,
-            horizon, 
-            n_action_steps, 
-            n_obs_steps,
-            num_inference_steps=None,
+            horizon,   # 예측할 step수
+            n_action_steps,   # 실제로 실행할 step수
+            n_obs_steps,    # 관찰할 step수 
+            num_inference_steps=None,   # denoising step수
             obs_as_global_cond=True,
-            crop_shape=(76, 76),
+            crop_shape=(76, 76),   # image cropping
             diffusion_step_embed_dim=256,
-            down_dims=(256,512,1024),
-            kernel_size=5,
+            down_dims=(256,512,1024),   # U-Net 모델의 dimension
+            kernel_size=5,   
             n_groups=8,
             cond_predict_scale=True,
             obs_encoder_group_norm=False,
@@ -40,11 +40,12 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             **kwargs):
         super().__init__()
 
-        # parse shape_meta
-        action_shape = shape_meta['action']['shape']
-        assert len(action_shape) == 1
-        action_dim = action_shape[0]
+        # parse shape_meta (cfg에 저장되어있음); shape_meta : action과 obs의 종류, shape, type 정보
+        action_shape = shape_meta['action']['shape']   
+        assert len(action_shape) == 1   # (shape,) 
+        action_dim = action_shape[0]   # shape (scalar)
         obs_shape_meta = shape_meta['obs']
+        # obs의 종류에 이중 뭐가 있는지 찾기
         obs_config = {
             'low_dim': [],
             'rgb': [],
@@ -55,7 +56,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         for key, attr in obs_shape_meta.items():
             shape = attr['shape']
             obs_key_shapes[key] = list(shape)
-
+            # type을 확인하고 있으면 그걸로, 없으면 기본값 'low_dim'으로
             type = attr.get('type', 'low_dim')
             if type == 'rgb':
                 obs_config['rgb'].append(key)
@@ -63,7 +64,9 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
                 obs_config['low_dim'].append(key)
             else:
                 raise RuntimeError(f"Unsupported obs type: {type}")
+        # obs_config에 'low_dim': ['agent_pos'], 'rgb': ['image'] 이런식으로 들어감
 
+        # robomimic에서 Image Encoder만 가져와 사용; square task, bc_rnn의 image encoder 구조
         # get raw robomimic config
         config = get_robomimic_config(
             algo_name='bc_rnn',
@@ -71,6 +74,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             task_name='square',
             dataset_type='ph')
         
+        # robomimic config를 수정 가능하게 함 (unlock)
         with config.unlocked():
             # set config with shape_meta
             config.observation.modalities.obs = obs_config
@@ -80,7 +84,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
                     if modality.obs_randomizer_class == 'CropRandomizer':
                         modality['obs_randomizer_class'] = None
             else:
-                # set random crop parameter
+                # set random crop parameter; 랜덤하게 image 자름
                 ch, cw = crop_shape
                 for key, modality in config.observation.encoder.items():
                     if modality.obs_randomizer_class == 'CropRandomizer':
@@ -134,6 +138,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             input_dim = action_dim
             global_cond_dim = obs_feature_dim * n_obs_steps
 
+        # U-Net 모델 생성
         model = ConditionalUnet1D(
             input_dim=input_dim,
             local_cond_dim=None,
@@ -222,10 +227,10 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         nobs = self.normalizer.normalize(obs_dict)
         value = next(iter(nobs.values()))
         B, To = value.shape[:2]
-        T = self.horizon
-        Da = self.action_dim
-        Do = self.obs_feature_dim
-        To = self.n_obs_steps
+        T = self.horizon    # 예측할 step수
+        Da = self.action_dim   # action의 dimension
+        Do = self.obs_feature_dim   # 관찰할 것의 dimension
+        To = self.n_obs_steps   # 관찰한 step수
 
         # build input
         device = self.device

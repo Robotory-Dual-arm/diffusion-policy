@@ -10,23 +10,28 @@ def create_indices(
     episode_mask: np.ndarray,
     pad_before: int=0, pad_after: int=0,
     debug:bool=True) -> np.ndarray:
-    episode_mask.shape == episode_ends.shape        
+    assert episode_mask.shape == episode_ends.shape      
+    # 0 < pad < sequence_length  
     pad_before = min(max(pad_before, 0), sequence_length-1)
     pad_after = min(max(pad_after, 0), sequence_length-1)
 
     indices = list()
     for i in range(len(episode_ends)):
+        # False면 그냥 Pass
         if not episode_mask[i]:
             # skip episode
             continue
+        # 0번째 episode면 start_idx 따로 지정
         start_idx = 0
         if i > 0:
             start_idx = episode_ends[i-1]
         end_idx = episode_ends[i]
+        # episode 길이
         episode_length = end_idx - start_idx
         
-        min_start = -pad_before
-        max_start = episode_length - sequence_length + pad_after
+        # episode_length : 실제 episode 길이 / sequence_length : 학습할때 episode 길이
+        min_start = -pad_before 
+        max_start = episode_length - sequence_length + pad_after 
         
         # range stops one idx before end
         for idx in range(min_start, max_start+1):
@@ -39,14 +44,17 @@ def create_indices(
             if debug:
                 assert(start_offset >= 0)
                 assert(end_offset >= 0)
+                # 사용하는 실제 sequence 수 (padding 제외된)
                 assert (sample_end_idx - sample_start_idx) == (buffer_end_idx - buffer_start_idx)
+                # buffer_start_idx, buffer_end_idx : 실제 episode에서 사용할 범위
+                # sample_start_idx, sample_end_idx : 앞의 패딩수, sequence에서 뒤의 패딩수 제외
             indices.append([
                 buffer_start_idx, buffer_end_idx, 
                 sample_start_idx, sample_end_idx])
     indices = np.array(indices)
     return indices
 
-
+# 총 episode중에 validation episode 뽑아서 T/F mask 생성 / val_ratio 비율만큼, 랜덤으로
 def get_val_mask(n_episodes, val_ratio, seed=0):
     val_mask = np.zeros(n_episodes, dtype=bool)
     if val_ratio <= 0:
@@ -55,11 +63,11 @@ def get_val_mask(n_episodes, val_ratio, seed=0):
     # have at least 1 episode for validation, and at least 1 episode for train
     n_val = min(max(1, round(n_episodes * val_ratio)), n_episodes-1)
     rng = np.random.default_rng(seed=seed)
-    val_idxs = rng.choice(n_episodes, size=n_val, replace=False)
+    val_idxs = rng.choice(n_episodes, size=n_val, replace=False)  # n_episodes개 중에서 n_val 만큼 랜덤한 idx 뽑기
     val_mask[val_idxs] = True
     return val_mask
 
-
+# train_mask가 max_train_episodes보다 크면 자름; 최대 train용 episode수 제한
 def downsample_mask(mask, max_n, seed=0):
     # subsample training data
     train_mask = mask
@@ -73,6 +81,7 @@ def downsample_mask(mask, max_n, seed=0):
         train_mask[train_idxs] = True
         assert np.sum(train_mask) == n_train
     return train_mask
+
 
 class SequenceSampler:
     def __init__(self, 
@@ -94,10 +103,13 @@ class SequenceSampler:
         if keys is None:
             keys = list(replay_buffer.keys())
         
+        # episode_ends : episode가 끝나는 지점들 
         episode_ends = replay_buffer.episode_ends[:]
+        # episode_mask : 어떤 episode들을 쓸건지 정하는 mask
         if episode_mask is None:
             episode_mask = np.ones(episode_ends.shape, dtype=bool)
 
+        # indices = [[buffer_start_idx, buffer_end_idx, sample_start_idx, sample_end_idx] ... ]
         if np.any(episode_mask):
             indices = create_indices(episode_ends, 
                 sequence_length=sequence_length, 

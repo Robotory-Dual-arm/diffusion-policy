@@ -15,11 +15,11 @@ def precise_sleep(dt: float, slack_time: float=0.001, time_func=time.monotonic):
 
 def precise_wait(t_end: float, slack_time: float=0.001, time_func=time.monotonic):
     t_start = time_func()
-    t_wait = t_end - t_start
+    t_wait = t_end - t_start   # 약 1 - 1/30   
     if t_wait > 0:
-        t_sleep = t_wait - slack_time
+        t_sleep = t_wait - slack_time   # 1 - 1/30 - 1/1000
         if t_sleep > 0:
             time.sleep(t_sleep)
-        while time_func() < t_end:
+        while time_func() < t_end:   
             pass
     return

@@ -78,7 +78,8 @@ class BaseWorkspace:
             exclude_keys = tuple()
         if include_keys is None:
             include_keys = payload['pickles'].keys()
-
+            
+        # self.__dict__에 모델 및 가중치 등 파라미터들 저장
         for key, value in payload['state_dicts'].items():
             if key not in exclude_keys:
                 self.__dict__[key].load_state_dict(value, **kwargs)
