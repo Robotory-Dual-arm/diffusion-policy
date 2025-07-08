@@ -1,5 +1,8 @@
 #!/home/vision/anaconda3/envs/robodiff/bin/python
 
+# 실행코드
+# python bae_eval_real_robot.py --input data/outputs/2025.06.22/18.46.11_train_diffusion_transformer_hybrid_bae_can_in_box/checkpoints/epoch\=0300.ckpt --output data/results
+
 """
 Usage:
 (robodiff)$ python eval_real_robot.py -i <ckpt_path> -o <save_dir> --robot_ip <ip_of_ur5>
@@ -36,7 +39,7 @@ import skvideo.io
 from omegaconf import OmegaConf
 import scipy.spatial.transform as st
 from diffusion_policy.real_world.bae_real_env import RealEnv   # 새로 만듬
-from diffusion_policy.real_world.spacemouse_shared_memory import Spacemouse
+# from diffusion_policy.real_world.spacemouse_shared_memory import Spacemouse
 from diffusion_policy.common.precise_sleep import precise_wait
 from diffusion_policy.real_world.real_inference_util import (
     get_real_obs_resolution, 
@@ -77,7 +80,6 @@ def main(input, output, robot_ip, match_dataset, match_episode,
     workspace.load_payload(payload, exclude_keys=None, include_keys=None)
     # 여기서 workspace.model에 cfg.policy가 들어감
 
-# ===================================================================================== Workspace 생성
 
     # hacks for method-specific setup.
     action_offset = 0
@@ -99,7 +101,6 @@ def main(input, output, robot_ip, match_dataset, match_episode,
     else:
         raise RuntimeError("Unsupported policy type: ", cfg.name)
 
-# ===================================================================================== Policy 생성 및 파라미터 설정
 
     # setup experiment
     dt = 1/frequency
@@ -110,13 +111,12 @@ def main(input, output, robot_ip, match_dataset, match_episode,
     print("steps_per_inference:", steps_per_inference)   # 예측한 action sequence에서 몇개의 action 실행할건지 (6)
     print("action_offset:", action_offset)   # action 지연 실행 (0)
 
-# ===================================================================================== 파라미터 설정
 
     # sharedmemory에 데이터들 쌓기; 같은 공유 공간 사용
     with SharedMemoryManager() as shm_manager:
         with RealEnv(
-            output_dir=output,   # 없애기
-            robot_ip=robot_ip,   # 없애기
+            output_dir=output, 
+            robot_ip=robot_ip, 
             frequency=frequency,   
             n_obs_steps=n_obs_steps,   
             obs_image_resolution=obs_res,   # (84, 84)

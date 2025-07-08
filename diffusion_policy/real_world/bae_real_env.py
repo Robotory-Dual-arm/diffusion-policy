@@ -49,7 +49,8 @@ class RealEnv:
             # obs
             obs_image_resolution=(640,480),
             max_obs_buffer_size=30,
-            camera_serial_numbers=None,
+            # camera_serial_numbers=None,
+            camera_serial_numbers=['117322071192', '126122270795'],
             obs_key_map=DEFAULT_OBS_KEY_MAP,   # 바꾸기!
             obs_float32=False,
             # action

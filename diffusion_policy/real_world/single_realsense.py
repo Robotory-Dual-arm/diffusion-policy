@@ -303,6 +303,11 @@ class SingleRealsense(mp.Process):
             pipeline = rs.pipeline()
             pipeline_profile = pipeline.start(rs_config)
 
+            device = pipeline_profile.get_device()
+            serial = self.serial_number
+            print(f"[DEBUG] Connected to device serial: {serial}")
+            print("[DEBUG] Device name:", device.get_info(rs.camera_info.name))
+
             # report global time
             # https://github.com/IntelRealSense/librealsense/pull/3909
             d = pipeline_profile.get_device().first_color_sensor()

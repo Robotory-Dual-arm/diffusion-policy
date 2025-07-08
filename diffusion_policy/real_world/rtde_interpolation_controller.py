@@ -3,9 +3,9 @@
 import rospy
 import spatialmath.base as smb
 from std_msgs.msg import Int32, Float64, String
-from msg import OnRobotRGOutput, OnRobotRGInput
-from rb10_api.cobot import * 
-from rb import *
+from diffusion_policy_test.msg import OnRobotRGOutput, OnRobotRGInput
+from diffusion_policy.rb10_api.cobot import * 
+from diffusion_policy.rb import *
 
 import os
 import time
@@ -33,6 +33,15 @@ def gripper_callback(msg):
 def servoL_rb(robot, current_joint, target_pose, dt, acc_limit=40.0):
     
     current_pose = robot.fkine(current_joint)
+    target_pose_se3 = SE3(
+    target_pose[0] / 1000,  # mm → m
+    target_pose[1] / 1000,
+    target_pose[2] / 1000) * SE3.RPY(
+    target_pose[3:], order='xyz', unit='deg'  # RPY도 deg 단위
+)
+
+    print("[DEBUG current_pose]:", current_pose)
+    print("[DEBUG target_pose]:", target_pose)
     pose_error = current_pose.inv() * target_pose
 
     err_pos = target_pose.t - current_pose.t
@@ -332,14 +341,15 @@ class RTDEInterpolationController(mp.Process):
             dt = 1. / self.frequency
 
             # curr_pose = rtde_r.getActualTCPPose()   # 현재 pose 가져오기; 바꾸기!
-            curr_pose = GetCurrentTCP()
+            p = GetCurrentTCP()
+            curr_pose = [p.x, p.y, p.z, p.rx, p.ry, p.rz]
 
             # use monotonic time to make sure the control loop never go backward
             curr_t = time.monotonic()
             last_waypoint_time = curr_t
             pose_interp = PoseTrajectoryInterpolator(
                 times=[curr_t],     # [ time ]
-                poses=[curr_pose]   # [ [x,y,z,rx,ry,rz] ]
+                poses=[curr_pose]   # [ [x,y,z,rx,ry,rz] ] ---> 이거 그리퍼도 들어가야되나?
             )
             
             iter_idx = 0
@@ -367,9 +377,14 @@ class RTDEInterpolationController(mp.Process):
                 
                 # RB 로봇 제어로 바꿈
                 pose_command_6d = pose_command[:6]
-                pose_command_gripper = pose_command[6:]   
-                current_joint = np.array(GetCurrentJoint()) * np.pi / 180   # rad
-                current_pose = GetCurrentTCP()
+                pose_command_gripper = pose_command[6:] 
+
+                j = GetCurrentJoint()
+                current_joint = np.array([j.j0, j.j1, j.j2, j.j3, j.j4, j.j5]) * np.pi / 180   # rad
+                
+                p = GetCurrentTCP()
+                current_pose = [p.x, p.y, p.z, p.rx, p.ry, p.rz]
+
                 # delta -> abs
                 MAX_TRANS = 0.015
                 MAX_ROT = np.pi
@@ -379,7 +394,7 @@ class RTDEInterpolationController(mp.Process):
                 pose_command_gripper = latest_gripper_qpos[0] + pose_command_gripper * MAX_GRIP   
                 
                 # 매니퓰레이터 및 그리퍼 제어
-                servoL_rb(rb10, current_joint, pose_command_6d)
+                servoL_rb(rb10, current_joint, pose_command_6d, dt)
                 self.gripper_control(pose_command_gripper)
                 
 
