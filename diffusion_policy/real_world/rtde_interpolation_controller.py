@@ -24,24 +24,25 @@ from diffusion_policy.shared_memory.shared_memory_queue import (
 from diffusion_policy.shared_memory.shared_memory_ring_buffer import SharedMemoryRingBuffer
 from diffusion_policy.common.pose_trajectory_interpolator import PoseTrajectoryInterpolator
 
-
+# 추가
 def gripper_callback(msg):
     global latest_gripper_qpos
     latest_gripper_qpos = [msg.gGWD]
+    print("[DEBUG] gripper callback received:", latest_gripper_qpos[0])
 
-# 추가
 def servoL_rb(robot, current_joint, target_pose, dt, acc_limit=40.0):
     
     current_pose = robot.fkine(current_joint)
-    target_pose_se3 = SE3(
+    target_pose = SE3(
     target_pose[0] / 1000,  # mm → m
     target_pose[1] / 1000,
     target_pose[2] / 1000) * SE3.RPY(
     target_pose[3:], order='xyz', unit='deg'  # RPY도 deg 단위
 )
+    # 디버깅
+    # print("[DEBUG] current_pose:", current_pose)
+    # print("[DEBUG] target_pose:", target_pose)
 
-    print("[DEBUG current_pose]:", current_pose)
-    print("[DEBUG target_pose]:", target_pose)
     pose_error = current_pose.inv() * target_pose
 
     err_pos = target_pose.t - current_pose.t
@@ -62,6 +63,7 @@ def ServoJ(joint_deg, time1=0.002, time2=0.1, gain=0.02, lpf_gain=0.2):
     msg = f"move_servo_j(jnt[{','.join(f'{j:.3f}' for j in joint_deg)}],{time1},{time2},{gain},{lpf_gain})"
     SendCOMMAND(msg, CMD_TYPE.MOVE)
     
+
 
 class Command(enum.Enum):
     STOP = 0
@@ -205,7 +207,9 @@ class RTDEInterpolationController(mp.Process):
         self.input_queue = input_queue
         self.ring_buffer = ring_buffer
         self.receive_keys = receive_keys
-    
+
+        self.gripper_pub = None   # 그리퍼 제어용 퍼블리셔
+
     # ========= launch method ===========
     def start(self, wait=True):   
         super().start()
@@ -264,7 +268,7 @@ class RTDEInterpolationController(mp.Process):
             self.gripper_pub = rospy.Publisher('/OnRobotRGOutput', OnRobotRGOutput, queue_size=10)
 
         cmd = OnRobotRGOutput()
-        cmd.rGWD = int(target_gripper_qpos)   
+        cmd.rGWD = int(target_gripper_qpos[0])   
         cmd.rGFR = 400
         cmd.rCTR = 16
 
@@ -376,6 +380,7 @@ class RTDEInterpolationController(mp.Process):
                 #     self.gain)
                 
                 # RB 로봇 제어로 바꿈
+                print("[DEBUG] pose_command:", pose_command)
                 pose_command_6d = pose_command[:6]
                 pose_command_gripper = pose_command[6:] 
 
@@ -391,10 +396,15 @@ class RTDEInterpolationController(mp.Process):
                 MAX_GRIP = 1100.0
                 pose_command_6d[:3] = current_pose[:3] + pose_command_6d[:3] * MAX_TRANS
                 pose_command_6d[3:] = current_pose[3:] + pose_command_6d[3:] * MAX_ROT
+                print("[DEBUG] gripper received:", latest_gripper_qpos[0])
+                print("[DEBUG] gripper delta command:", pose_command_gripper)
+                if pose_command_gripper == []:
+                    pose_command_gripper = [0]
                 pose_command_gripper = latest_gripper_qpos[0] + pose_command_gripper * MAX_GRIP   
                 
                 # 매니퓰레이터 및 그리퍼 제어
                 servoL_rb(rb10, current_joint, pose_command_6d, dt)
+                print("[DEBUG] gripper command:", pose_command_gripper)
                 self.gripper_control(pose_command_gripper)
                 
 

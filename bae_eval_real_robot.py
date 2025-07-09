@@ -134,7 +134,10 @@ def main(input, output, robot_ip, match_dataset, match_episode,
             
             # Should be the same as demo
             # realsense exposure
-            env.realsense.set_exposure(exposure=120, gain=0)
+
+            # 수정함
+            # env.realsense.set_exposure(exposure=120, gain=0)
+            env.realsense.set_exposure(exposure=120, gain=16)
             # realsense white balance
             env.realsense.set_white_balance(white_balance=5900)
 

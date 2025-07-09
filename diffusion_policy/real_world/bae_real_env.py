@@ -50,7 +50,9 @@ class RealEnv:
             obs_image_resolution=(640,480),
             max_obs_buffer_size=30,
             # camera_serial_numbers=None,
-            camera_serial_numbers=['117322071192', '126122270795'],
+            # camera_serial_numbers=['117322071192', '126122270795'], # D435I, D405
+            # camera_serial_numbers=['117322071192','231522070679'], # D435I, D435
+            camera_serial_numbers=None,
             obs_key_map=DEFAULT_OBS_KEY_MAP,   # 바꾸기!
             obs_float32=False,
             # action
