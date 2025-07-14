@@ -32,7 +32,8 @@ DEFAULT_OBS_KEY_MAP = {
     # robot
     'robot_eef_pos': 'robot_eef_pos',
     'robot_eef_quat': 'robot_eef_quat',
-    'robot_gripper_qpos': 'robot_gripper_qpos',
+    # 'robot_gripper_qpos': 'robot_gripper_qpos',
+
     # timestamps
     'step_idx': 'step_idx',
     'timestamp': 'timestamp'
@@ -47,13 +48,13 @@ class RealEnv:
             frequency=20,
             n_obs_steps=2,
             # obs
-            obs_image_resolution=(640,480),
+            obs_image_resolution=(84,84),
             max_obs_buffer_size=30,
             # camera_serial_numbers=None,
-            # camera_serial_numbers=['117322071192', '126122270795'], # D435I, D405
-            # camera_serial_numbers=['117322071192','231522070679'], # D435I, D435
-            camera_serial_numbers=None,
-            obs_key_map=DEFAULT_OBS_KEY_MAP,   # 바꾸기!
+            camera_serial_numbers=['126122270795', '117322071192'], # D405, D435I
+            # camera_serial_numbers=['231522070679', '117322071192'], # D435, D435I
+            # camera_serial_numbers=None,
+            obs_key_map=DEFAULT_OBS_KEY_MAP,   
             obs_float32=False,
             # action
             max_pos_speed=0.25,
@@ -63,13 +64,14 @@ class RealEnv:
             init_joints=False,
             # video capture params
             video_capture_fps=30,
-            video_capture_resolution=(1280,720),
+            # video_capture_resolution=(1280,720),
+            video_capture_resolution=(640,480),   
             # saving params
-            record_raw_video=False,   # raw 영상 저장 안함 (obs 영상 저장)
+            record_raw_video=False,   
             thread_per_video=2,
             video_crf=21,
             # vis params
-            enable_multi_cam_vis=False,   # 실시간 시각화 안함
+            enable_multi_cam_vis=False,   
             multi_cam_vis_resolution=(1280,720),
             # shared memory
             shm_manager=None
@@ -100,10 +102,10 @@ class RealEnv:
             # obs output rgb
             bgr_to_rgb=True)
         color_transform = color_tf
-        if obs_float32:
+        if obs_float32:   # True
             color_transform = lambda x: color_tf(x).astype(np.float32) / 255
 
-        def transform(data):
+        def transform(data):   # bgr -> rgb, normalize, 해상도 변환
             data['color'] = color_transform(data['color'])
             return data
         
@@ -111,8 +113,8 @@ class RealEnv:
         # 실시간 시각화용 해상도 변환
         rw, rh, col, row = optimal_row_cols(   # grid로 멀티 영상 띄우기
             n_cameras=len(camera_serial_numbers),
-            in_wh_ratio=obs_image_resolution[0]/obs_image_resolution[1],
-            max_resolution=multi_cam_vis_resolution
+            in_wh_ratio=obs_image_resolution[0]/obs_image_resolution[1], # 84/84 = 1
+            max_resolution=multi_cam_vis_resolution   # (1280,720) 
         )
         vis_color_transform = get_image_transform(
             input_res=video_capture_resolution,
@@ -134,7 +136,7 @@ class RealEnv:
             recording_transfrom = transform
             recording_fps = frequency
             recording_pix_fmt = 'rgb24'
-        # 비디오 끌수 있는 방법좀 찾아!
+        
         video_recorder = VideoRecorder.create_h264(
             fps=recording_fps, 
             codec='h264',
@@ -168,7 +170,7 @@ class RealEnv:
         
 
         multi_cam_vis = None
-        if enable_multi_cam_vis:   # False; 시각화 안함
+        if enable_multi_cam_vis:   # 시각화
             multi_cam_vis = MultiCameraVisualizer(
                 realsense=realsense,
                 row=row,
@@ -187,7 +189,7 @@ class RealEnv:
         robot = RTDEInterpolationController(
             shm_manager=shm_manager,
             robot_ip=robot_ip,
-            frequency=125, # UR5 CB3 RTDE; 바꾸기!
+            frequency=125, 
             lookahead_time=0.1,
             gain=300,
             max_pos_speed=max_pos_speed*cube_diag,
@@ -302,8 +304,9 @@ class RealEnv:
                     this_idx = is_before_idxs[-1]
                 this_idxs.append(this_idx)
             # remap key
-            camera_obs[f'camera_{camera_idx}'] = value['color'][this_idxs]
-
+            # camera_obs[f'camera_{camera_idx}'] = value['color'][this_idxs]
+            camera_obs[f'image{camera_idx}'] = value['color'][this_idxs]
+            
         # 로봇 obs 데이터 얻기
         # align robot obs
         robot_timestamps = last_robot_data['robot_receive_timestamp']

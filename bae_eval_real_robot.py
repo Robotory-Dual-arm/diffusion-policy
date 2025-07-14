@@ -1,8 +1,7 @@
 #!/home/vision/anaconda3/envs/robodiff/bin/python
 
 # 실행코드
-# python bae_eval_real_robot.py --input data/outputs/2025.06.22/18.46.11_train_diffusion_transformer_hybrid_bae_can_in_box/checkpoints/epoch\=0300.ckpt --output data/results
-
+# python bae_eval_real_robot.py --input data/outputs/2025.07.13/18.59.18_train_diffusion_transformer_hybrid_bae_push_image_abs/checkpoints/epoch\=0750-train_loss\=0.005.ckpt --output data/results
 """
 Usage:
 (robodiff)$ python eval_real_robot.py -i <ckpt_path> -o <save_dir> --robot_ip <ip_of_ur5>
@@ -62,7 +61,7 @@ OmegaConf.register_new_resolver("eval", eval, replace=True)
 @click.option('--init_joints', '-j', is_flag=True, default=False, help="Whether to initialize robot joint configuration in the beginning.")
 @click.option('--steps_per_inference', '-si', default=6, type=int, help="Action horizon for inference.")   # 몇개의 action 실행할건지
 @click.option('--max_duration', '-md', default=60, help='Max duration for each epoch in seconds.')
-@click.option('--frequency', '-f', default=20, type=float, help="Control frequency in Hz.")   # 20Hz ??
+@click.option('--frequency', '-f', default=10, type=float, help="Control frequency in Hz.")   # 20Hz ??
 @click.option('--command_latency', '-cl', default=0.01, type=float, help="Latency between receiving SapceMouse command to executing on Robot in Sec.")
 def main(input, output, robot_ip, match_dataset, match_episode,
     vis_camera_idx, init_joints, 
@@ -122,8 +121,8 @@ def main(input, output, robot_ip, match_dataset, match_episode,
             obs_image_resolution=obs_res,   # (84, 84)
             obs_float32=True,   
             init_joints=init_joints,   # False
-            enable_multi_cam_vis=False,   # 실시간 시각화 안함
-            record_raw_video=False,   # 영상 저장 안함
+            enable_multi_cam_vis=True,   # 실시간 시각화 
+            record_raw_video=False,   # 영상 저장 
             # number of threads per camera view for video recording (H.264)
             thread_per_video=3,
             # video recording quality, lower is better (but slower).
@@ -131,23 +130,22 @@ def main(input, output, robot_ip, match_dataset, match_episode,
             shm_manager=shm_manager) as env:
             cv2.setNumThreads(1)
 
-            
+
+            # Realsense-viewer에서 설정
             # Should be the same as demo
             # realsense exposure
-
-            # 수정함
             # env.realsense.set_exposure(exposure=120, gain=0)
-            env.realsense.set_exposure(exposure=120, gain=16)
             # realsense white balance
-            env.realsense.set_white_balance(white_balance=5900)
+            # env.realsense.set_white_balance(white_balance=5900)
 
             print("Waiting for realsense")
             time.sleep(1.0)
 
             print("Warming up policy inference")
             
-            # obs 받아오기; 함수 확인!!!!!!!!!!!!!!!!!!!!!!!!!!!! 이거 바뀌어야함
+            # obs 받아오기
             obs = env.get_obs()
+
             with torch.no_grad():
                 policy.reset()
 
@@ -163,7 +161,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                 result = policy.predict_action(obs_dict)   # {'action': ~ , 'action_pred': ~}
                 # 실제 실행할 action trajectory
                 action = result['action'][0].detach().to('cpu').numpy()   # [0]은 배치차원 제거, tensor --> np
-                assert action.shape[-1] == 7   # action 차원에 맞게 바꿔주기
+                assert action.shape[-1] == 9   # action 차원에 맞게 바꿔주기
                 del result
 
             print('Ready!')
@@ -175,9 +173,9 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                     policy.reset()
                     start_delay = 1.0
                     eval_t_start = time.time() + start_delay   # 시스템시간, 영상 로그용
-                    t_start = time.monotonic() + start_delay   # 로봇 제어 신뢰할수있는 시간(더 정확)
-                    # Accumulator 관련해서 오류없나 보기 !!!!!!!!!!!!!!!!!!!!!!!!!!!
-                    env.start_episode(eval_t_start)   # 영상 저장 시작; accumulator 생성
+                    t_start = time.monotonic() + start_delay   # 로봇 제어 시간
+
+                    env.start_episode(eval_t_start)   # 영상 저장 시작
                     # wait for 1/30 sec to get the closest frame actually
                     # reduces overall latency; 카메라 프레임 잘 받아오도록
                     frame_latency = 1/30
@@ -190,7 +188,6 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                         # calculate timing; 실행할 action 만큼 기다릴 시간
                         t_cycle_end = t_start + (iter_idx + steps_per_inference) * dt
 
-                        # get obs; 고치기 !!!!!!!!!!!!!!!!!!!!!!!!!!!
                         print('get_obs')
                         obs = env.get_obs()
                         obs_timestamps = obs['timestamp']
@@ -219,11 +216,11 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                             perv_target_pose = this_target_pose
                             this_target_poses = np.expand_dims(this_target_pose, axis=0)
 
-                        else:   # len(action): Horizon / len(target_pose): 7
-                            this_target_poses = np.zeros((len(action), 7), dtype=np.float64)
+                        else:   # len(action): Horizon / len(target_pose): 9
+                            this_target_poses = np.zeros((len(action), action.shape[-1]), dtype=np.float64)
                             # this_target_poses[:] = target_pose
                             # this_target_poses[:,[0,1]] = action   
-                            this_target_poses[:, :7] = action
+                            this_target_poses[:, :action.shape[-1]] = action
 
                         # deal with timing
                         # the same step actions are always the target for
@@ -249,8 +246,9 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                         # clip actions; 범위 바꿈
                         # this_target_poses[:,:2] = np.clip(
                         #     this_target_poses[:,:2], [0.25, -0.45], [0.77, 0.40])
-                        this_target_poses[:,:3] = np.clip(
-                            this_target_poses[:,:3], [-0.50, -0.90, 0.095], [0.40, -0.37, 0.81])
+                        # delta action이라 clip 안함!!!!!!!!!!!!!!!!!!!!!!!!!!
+                        # this_target_poses[:,:3] = np.clip(
+                        #     this_target_poses[:,:3], [-0.50, -0.90, 0.095], [0.40, -0.37, 0.81])
                         
                         # execute actions; 실제 action 실행부분; 
                         env.exec_actions(

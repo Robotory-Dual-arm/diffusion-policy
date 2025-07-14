@@ -140,6 +140,9 @@ class VideoRecorder:
         assert img.shape == self.shape
         assert img.dtype == self.dtype
 
+        # 추가함
+        img = (img * 255.0).clip(0, 255).astype(np.uint8)
+
         frame = av.VideoFrame.from_ndarray(
             img, format=self.input_pix_fmt)
         for i in range(n_repeats):

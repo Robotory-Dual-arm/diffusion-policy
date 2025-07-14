@@ -7,18 +7,18 @@ import scipy.spatial.transform as st
 def rotation_distance(a: st.Rotation, b: st.Rotation) -> float:
     return (b * a.inv()).magnitude()
 
-def pose_distance(start_pose, end_pose):
+def pose_distance(start_pose, end_pose):  
     start_pose = np.array(start_pose)
     end_pose = np.array(end_pose)
     start_pos = start_pose[:3]
     end_pos = end_pose[:3]
-    start_rot = st.Rotation.from_rotvec(start_pose[3:])
-    end_rot = st.Rotation.from_rotvec(end_pose[3:])
+    start_rot = st.Rotation.from_rotvec(start_pose[3:6])
+    end_rot = st.Rotation.from_rotvec(end_pose[3:6])
     pos_dist = np.linalg.norm(end_pos - start_pos)
     rot_dist = rotation_distance(start_rot, end_rot)
     return pos_dist, rot_dist
 
-class PoseTrajectoryInterpolator:
+class PoseTrajectoryInterpolator:   # poses = [ [x,y,z,rx,ry,rz] ]
     def __init__(self, times: np.ndarray, poses: np.ndarray):
         assert len(times) >= 1
         assert len(poses) == len(times)
@@ -36,13 +36,19 @@ class PoseTrajectoryInterpolator:
             self.single_step = False
             assert np.all(times[1:] >= times[:-1])
 
+            # 수정됨
             pos = poses[:,:3]
-            rot = st.Rotation.from_rotvec(poses[:,3:])
+            # rot = st.Rotation.from_rotvec(poses[:,3:])
+            rot = st.Rotation.from_rotvec(poses[:,3:6])
+            # gripper = poses[:,6]
 
             self.pos_interp = si.interp1d(times, pos, 
                 axis=0, assume_sorted=True)
             self.rot_interp = st.Slerp(times, rot)
-    
+            # 추가됨
+            # self.gripper_interp = si.interp1d(times, gripper,
+            #     axis=0, assume_sorted=True)
+
     @property   # self.times
     def times(self) -> np.ndarray:
         if self.single_step:
@@ -55,10 +61,14 @@ class PoseTrajectoryInterpolator:
         if self.single_step:
             return self._poses
         else:
+            # 수정됨
             n = len(self.times)
             poses = np.zeros((n, 6))
+            # poses = np.zeros((n, 7))
             poses[:,:3] = self.pos_interp.y   # pos
-            poses[:,3:] = self.rot_interp(self.times).as_rotvec()   # rot
+            # poses[:,3:] = self.rot_interp(self.times).as_rotvec()   # rot
+            poses[:,3:6] = self.rot_interp(self.times).as_rotvec()   # rot
+            # poses[:,6] = self.gripper_interp.y   # gripper
             return poses
 
     def trim(self,   # start_t에서 end_t까지의 구간을 잘라냄
@@ -75,7 +85,7 @@ class PoseTrajectoryInterpolator:
         all_poses = self(all_times)
         return PoseTrajectoryInterpolator(times=all_times, poses=all_poses)
     
-    def drive_to_waypoint(self, 
+    def drive_to_waypoint(self,   # 안씀
             pose, time, curr_time,
             max_pos_speed=np.inf, 
             max_rot_speed=np.inf
@@ -180,7 +190,7 @@ class PoseTrajectoryInterpolator:
         times = np.append(trimmed_interp.times, [last_waypoint_time], axis=0)
         poses = np.append(trimmed_interp.poses, [pose], axis=0)
 
-        # create new interpolator; 새로 만들기
+        # create new interpolator
         final_interp = PoseTrajectoryInterpolator(times, poses)
         return final_interp
 
@@ -192,6 +202,8 @@ class PoseTrajectoryInterpolator:
             t = np.array([t])
         
         pose = np.zeros((len(t), 6))
+        # pose = np.zeros((len(t), 7))
+
         if self.single_step:
             pose[:] = self._poses[0]   # [x,y,z,rx,ry,rz]
         else:
@@ -200,10 +212,12 @@ class PoseTrajectoryInterpolator:
             t = np.clip(t, start_time, end_time)
 
             pose = np.zeros((len(t), 6))
+            # pose = np.zeros((len(t), 7))
             pose[:,:3] = self.pos_interp(t)
-            pose[:,3:] = self.rot_interp(t).as_rotvec()
+            # pose[:,3:] = self.rot_interp(t).as_rotvec()
+            pose[:,3:6] = self.rot_interp(t).as_rotvec()
+            # pose[:,6] = self.gripper_interp(t)
 
         if is_single:
             pose = pose[0]
-        return pose   # single이면 [x,y,z,rx,ry,rz]
-                      # multi면 [[x,y,z,rx,ry,rz], [ ~ ] ... ]
+        return pose   

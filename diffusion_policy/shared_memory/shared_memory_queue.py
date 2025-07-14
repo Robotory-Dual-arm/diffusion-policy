@@ -100,6 +100,8 @@ class SharedMemoryQueue:
         for key, value in data.items():
             arr: np.ndarray
             arr = self.shared_arrays[key].get()
+            # print("[DEBUG] key:", key)
+            # print("[DEBUG] value:", value)
             if isinstance(value, np.ndarray):
                 arr[next_idx] = value
             else:

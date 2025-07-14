@@ -6,6 +6,7 @@ from std_msgs.msg import Int32, Float64, String
 from diffusion_policy_test.msg import OnRobotRGOutput, OnRobotRGInput
 from diffusion_policy.rb10_api.cobot import * 
 from diffusion_policy.rb import *
+from scipy.spatial.transform import Rotation as R
 
 import os
 import time
@@ -28,17 +29,41 @@ from diffusion_policy.common.pose_trajectory_interpolator import PoseTrajectoryI
 def gripper_callback(msg):
     global latest_gripper_qpos
     latest_gripper_qpos = [msg.gGWD]
-    print("[DEBUG] gripper callback received:", latest_gripper_qpos[0])
+    # print("[DEBUG] gripper callback received:", latest_gripper_qpos[0])
 
-def servoL_rb(robot, current_joint, target_pose, dt, acc_limit=40.0):
+def rot6d_to_rotvec(rot6d: np.ndarray) -> np.ndarray:
+   
+    a1 = rot6d[:3]
+    a2 = rot6d[3:]
+
+    b1 = a1 / np.linalg.norm(a1)
+
+    a2_proj = np.dot(b1, a2) * b1
+    b2 = a2 - a2_proj
+    b2 = b2 / np.linalg.norm(b2)
+
+    b3 = np.cross(b1, b2)
+
+    R_mat = np.stack((b1, b2, b3), axis=1)  
+
+    rot = R.from_matrix(R_mat)
+    rot_vec = rot.as_rotvec()  
+
+    return rot_vec
+
+# current_joint: rad / target_pose: m, rad
+def servoL_rb(robot, current_joint, target_pose, dt, acc_limit=40.0):   # target_pose : rot_vec
     
     current_pose = robot.fkine(current_joint)
-    target_pose = SE3(
-    target_pose[0] / 1000,  # mm → m
-    target_pose[1] / 1000,
-    target_pose[2] / 1000) * SE3.RPY(
-    target_pose[3:], order='xyz', unit='deg'  # RPY도 deg 단위
-)
+    pos     = np.array(target_pose[:3])   # m
+    rot_vec = np.array(target_pose[3:])   # rad         
+    rotm    = R.from_rotvec(rot_vec).as_matrix()   
+    T = np.eye(4)
+    T[:3, :3] = rotm
+    T[:3,  3] = pos
+
+    target_pose = SE3(T)                   
+    
     # 디버깅
     # print("[DEBUG] current_pose:", current_pose)
     # print("[DEBUG] target_pose:", target_pose)
@@ -56,9 +81,13 @@ def servoL_rb(robot, current_joint, target_pose, dt, acc_limit=40.0):
     if np.linalg.norm(dq[:3]) > acc_limit:
         dq[:3] *= acc_limit / np.linalg.norm(dq[:3])
     
-    next_joint = current_joint + dq * 0.5
-    ServoJ(next_joint * 180 / np.pi)
+    next_joint = current_joint + dq * 0.15
+    ServoJ(next_joint * 180 / np.pi, time1=dt)
 
+# times1: 제어시간, time2: lookahead time, gain: p-gain, lpf_gain: low pass filter gain
+# time2 -> 클수록 smooth, but 반응 느림 (0.02 < time2 < 0.2)
+# gain -> 클수록 빠르게 반응, but 진동 발생 (p > 0)
+# lpf_gain -> 클수록 진동 감소, but 반응 느림 (0 < lpf_gain < 1)
 def ServoJ(joint_deg, time1=0.002, time2=0.1, gain=0.02, lpf_gain=0.2):
     msg = f"move_servo_j(jnt[{','.join(f'{j:.3f}' for j in joint_deg)}],{time1},{time2},{gain},{lpf_gain})"
     SendCOMMAND(msg, CMD_TYPE.MOVE)
@@ -148,7 +177,8 @@ class RTDEInterpolationController(mp.Process):
         # build input queue; 예시 구조로부터 Queue 생성
         example = {
             'cmd': Command.SERVOL.value,
-            'target_pose': np.zeros((6,), dtype=np.float64),
+            # 'target_pose': np.zeros((6,), dtype=np.float64),
+            'target_pose': np.zeros((9,), dtype=np.float64),
             'duration': 0.0,
             'target_time': 0.0
         }
@@ -191,8 +221,8 @@ class RTDEInterpolationController(mp.Process):
                 example[key] = np.zeros((3,), dtype=np.float64)
             elif key == 'robot_eef_quat':
                 example[key] = np.zeros((4,), dtype=np.float64)
-            elif key == 'robot_gripper_qpos':
-                example[key] = np.zeros((1,), dtype=np.float64)
+            # elif key == 'robot_gripper_qpos':
+            #     example[key] = np.zeros((1,), dtype=np.float64)
 
         example['robot_receive_timestamp'] = time.time()
         ring_buffer = SharedMemoryRingBuffer.create_from_examples(   # state 담아놓을 메모리
@@ -275,11 +305,11 @@ class RTDEInterpolationController(mp.Process):
         self.gripper_pub.publish(cmd)
 
 
-    def schedule_waypoint(self, pose, target_time):   # 이거 쓰는듯
+    def schedule_waypoint(self, pose, target_time):   # 이거 사용
         assert target_time > time.time()
         pose = np.array(pose)
         # assert pose.shape == (6,)
-        assert pose.shape == (7,)   
+        assert pose.shape == (9,)   
 
         message = {
             'cmd': Command.SCHEDULE_WAYPOINT.value,
@@ -314,14 +344,15 @@ class RTDEInterpolationController(mp.Process):
         rb10 = RB10()
         CobotInit()
 
-        # SetProgramMode(PG_MODE.REAL)
-        SetProgramMode(PG_MODE.SIMULATION)
+        # Real or Simulation
+        SetProgramMode(PG_MODE.REAL)
+        # SetProgramMode(PG_MODE.SIMULATION)
 
-        global latest_gripper_qpos
-        latest_gripper_qpos = [0]
 
-        rospy.init_node('gripper', anonymous=True)   
-        rospy.Subscriber('/OnRobotRGInput', OnRobotRGInput, gripper_callback, queue_size=1)  
+        # global latest_gripper_qpos
+        # latest_gripper_qpos = [1100]
+        # rospy.init_node('gripper', anonymous=True)   
+        # rospy.Subscriber('/OnRobotRGInput', OnRobotRGInput, gripper_callback, queue_size=1)  
 
         try:
             if self.verbose:   # False
@@ -346,14 +377,18 @@ class RTDEInterpolationController(mp.Process):
 
             # curr_pose = rtde_r.getActualTCPPose()   # 현재 pose 가져오기; 바꾸기!
             p = GetCurrentTCP()
-            curr_pose = [p.x, p.y, p.z, p.rx, p.ry, p.rz]
-
+            curr_pose = [p.x, p.y, p.z, p.rx, p.ry, p.rz]   # mm, deg
+            # curr_pose.append(latest_gripper_qpos[0])   
+            curr_pose = np.array(curr_pose)   
+            curr_pose[0:3] = curr_pose[0:3] / 1000.0   # mm -> m
+            curr_pose[3:6] = curr_pose[3:6] * np.pi / 180.0   # deg -> rad
+            
             # use monotonic time to make sure the control loop never go backward
             curr_t = time.monotonic()
             last_waypoint_time = curr_t
-            pose_interp = PoseTrajectoryInterpolator(
+            pose_interp = PoseTrajectoryInterpolator(   # abs
                 times=[curr_t],     # [ time ]
-                poses=[curr_pose]   # [ [x,y,z,rx,ry,rz] ] ---> 이거 그리퍼도 들어가야되나?
+                poses=[curr_pose]   # [ [x,y,z,rx,ry,rz] ] ---> [ [x,y,z,rx,ry,rz,gripper] ]
             )
             
             iter_idx = 0
@@ -378,56 +413,55 @@ class RTDEInterpolationController(mp.Process):
                 #     dt, 
                 #     self.lookahead_time, 
                 #     self.gain)
-                
-                # RB 로봇 제어로 바꿈
-                print("[DEBUG] pose_command:", pose_command)
-                pose_command_6d = pose_command[:6]
-                pose_command_gripper = pose_command[6:] 
 
+                
+                # 디버깅
+                # print("[DEBUG] curr_pose: ", curr_pose)
+                # print("[DEBUG] pose_command: ", pose_command)
+
+
+                # 우리 로봇 제어              
                 j = GetCurrentJoint()
                 current_joint = np.array([j.j0, j.j1, j.j2, j.j3, j.j4, j.j5]) * np.pi / 180   # rad
-                
-                p = GetCurrentTCP()
-                current_pose = [p.x, p.y, p.z, p.rx, p.ry, p.rz]
 
-                # delta -> abs
-                MAX_TRANS = 0.015
-                MAX_ROT = np.pi
-                MAX_GRIP = 1100.0
-                pose_command_6d[:3] = current_pose[:3] + pose_command_6d[:3] * MAX_TRANS
-                pose_command_6d[3:] = current_pose[3:] + pose_command_6d[3:] * MAX_ROT
-                print("[DEBUG] gripper received:", latest_gripper_qpos[0])
-                print("[DEBUG] gripper delta command:", pose_command_gripper)
-                if pose_command_gripper == []:
-                    pose_command_gripper = [0]
-                pose_command_gripper = latest_gripper_qpos[0] + pose_command_gripper * MAX_GRIP   
-                
-                # 매니퓰레이터 및 그리퍼 제어
-                servoL_rb(rb10, current_joint, pose_command_6d, dt)
-                print("[DEBUG] gripper command:", pose_command_gripper)
-                self.gripper_control(pose_command_gripper)
-                
 
+                # 매니퓰레이터 및 그리퍼 제어                
+                servoL_rb(rb10, current_joint, pose_command[:6], dt)
+                # self.gripper_control(pose_command[6:])
+
+
+                # 현재 State 저장
                 # update robot state; ringbuffer에 state 저장
                 state = dict()
                 # for key in self.receive_keys:
                 #     state[key] = np.array(getattr(rtde_r, 'get'+key)())
                 
-                # 현재 State 저장
+                p = GetCurrentTCP()
+                curr_pose = [p.x, p.y, p.z, p.rx, p.ry, p.rz]   # mm, deg
+                # curr_pose.append(latest_gripper_qpos[0])
+                curr_pose = np.array(curr_pose)
+                curr_pose[0:3] = curr_pose[0:3] / 1000.0   # mm -> m
+                curr_pose[3:6] = curr_pose[3:6] * np.pi / 180.0   # deg -> rad
+                # print('[DEBUG] current pose:', curr_pose)
                 for key in self.receive_keys:
                     if key == 'robot_eef_pos':
-                        state[key] = np.array(GetCurrentTCP()[:3])   # 현재 pose
+                        state[key] = np.array(curr_pose[:3])   # 현재 pose; meter
                     elif key == 'robot_eef_quat':
-                        state[key] = np.array(smb.r2q(GetCurrentTCP()[3:]))   # 현재 quat
-                    elif key == 'robot_gripper_qpos':
-                        state[key] = np.array(latest_gripper_qpos[0])   # 현재 그리퍼 pose
+                        # state[key] = np.array(smb.r2q(curr_pose[3:6]))   # 현재 quat
+                        rot_vec = np.array(curr_pose[3:6])
+                        quat = R.from_rotvec(rot_vec).as_quat()   # rot_vec --> quat
+                        state[key] = np.array(quat)
+                    # elif key == 'robot_gripper_qpos':
+                    #     state[key] = np.array(curr_pose[6:])   # 현재 그리퍼 pose
 
                 state['robot_receive_timestamp'] = time.time()
                 self.ring_buffer.put(state)   
 
+
                 # fetch command from queue
                 try:
                     commands = self.input_queue.get_all()   # command 긁어옴
+                    # print('[DEBUG] commands', commands)
                     n_cmd = len(commands['cmd'])
                 except Empty:
                     n_cmd = 0
@@ -448,8 +482,8 @@ class RTDEInterpolationController(mp.Process):
                         # if we start the next interpolation with curr_pose
                         # the command robot receive will have discontinouity 
                         # and cause jittery robot behavior.
-                        target_pose = command['target_pose']   
-                        duration = float(command['duration'])   # 지속시간
+                        target_pose = command['target_pose']  
+                        duration = float(command['duration']) 
                         curr_time = t_now + dt
                         t_insert = curr_time + duration
                         pose_interp = pose_interp.drive_to_waypoint(
@@ -466,7 +500,25 @@ class RTDEInterpolationController(mp.Process):
                             
                     # 이걸로 제어 (n_cmd 1개씩 제어)
                     elif cmd == Command.SCHEDULE_WAYPOINT.value:
-                        target_pose = command['target_pose']   # 목표 pose
+                        target_pose = command['target_pose']   # abs; 3d pose, 6d rotation
+
+                        # print('[DEBUG] target_pose_before', target_pose)
+
+                        # target_pose[:3] = target_pose[:3] * 1000.0   # m -> mm
+                        
+                        target_position = target_pose[:3]   # 3d position, meter
+                        target_rotvec = rot6d_to_rotvec(target_pose[3:])   # 6d rotation -> rot_vec
+                        target_pose = np.concatenate([target_position, target_rotvec])   # 3d position, rot_vec
+
+                        print('[DEBUG] target_pose', target_pose)
+                        
+                        # print('[DEBUG] current rot_vec', curr_pose[3:6])
+                        # target_pose[:3] = curr_pose[:3] + target_pose[:3] * MAX_TRANS   # pose, meter
+                        # target_pose[3:6] = (R.from_rotvec(target_pose[3:6] * MAX_ROT) * R.from_rotvec(curr_pose[3:6])).as_rotvec()   # rotation, rad
+                        # target_pose[6] = curr_pose[6] + target_pose[6] * MAX_GRIP    # gripper
+
+                        # print('[DEBUG] target rot_vec', target_pose[3:6])
+
                         target_time = float(command['target_time'])   # time.time 기준
                         # translate global time to monotonic time
                         target_time = time.monotonic() - time.time() + target_time   # time.monotonic 기준

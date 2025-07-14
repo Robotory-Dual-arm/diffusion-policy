@@ -1,0 +1,44 @@
+name: bae_push_image_abs
+
+image_shape: [3, 84, 84]
+dataset_path: data/baetae/bae_push_image_abs.hdf5
+
+shape_meta: &shape_meta
+  obs:
+    image0:
+      shape: [3, 84, 84]
+      type: rgb
+    image1:
+      shape: [3, 84, 84]
+      type: rgb
+    robot_eef_pos:
+      shape: [3]
+      type: low_dim
+    robot_eef_quat:
+      shape: [4]
+      type: low_dim
+    # robot_gripper_qpos:
+    #   shape: [1]
+    #   type: low_dim
+  action: 
+    shape: [9]
+
+env_runner:
+  _target_: diffusion_policy.env_runner.real_pusht_image_runner.RealPushTImageRunner
+
+dataset:
+  _target_: diffusion_policy.dataset.robomimic_replay_image_dataset.RobomimicReplayImageDataset
+  shape_meta: *shape_meta
+  dataset_path: ${task.dataset_path}
+  horizon: ${horizon}
+  # pad_before: ${eval:'${n_obs_steps}-1+${n_latency_steps}'}
+  pad_before: ${eval:'${n_obs_steps}-1'}
+  pad_after: ${eval:'${n_action_steps}-1'}
+  n_obs_steps: ${dataset_obs_steps}
+  # n_latency_steps: ${n_latency_steps}
+  use_cache: True
+  seed: 42
+  val_ratio: 0.00
+  # max_train_episodes: null
+  # delta_action: False
+

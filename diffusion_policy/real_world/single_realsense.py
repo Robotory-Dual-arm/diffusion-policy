@@ -281,7 +281,7 @@ class SingleRealsense(mp.Process):
         threadpool_limits(1)
         cv2.setNumThreads(1)
 
-        w, h = self.resolution
+        w, h = self.resolution   # 640, 480
         fps = self.capture_fps
         align = rs.align(rs.stream.color)
         # Enable the streams from all the intel realsense devices
@@ -313,16 +313,16 @@ class SingleRealsense(mp.Process):
             # https://github.com/IntelRealSense/librealsense/pull/3909
             
             # 수정함
-            d = pipeline_profile.get_device().first_color_sensor()
-            d.set_option(rs.option.global_time_enabled, 1)
-            # try:
-            #     color_sensor = pipeline_profile.get_device().first_color_sensor()
-            #     color_sensor.set_option(rs.option.global_time_enabled, 1)
-            # except:
-            #     for s in pipeline_profile.get_device().query_sensors():
-            #         if s.get_info(rs.camera_info.name) == "Stereo Module":
-            #             s.set_option(rs.option.global_time_enabled, 1)
-            #             break
+            # d = pipeline_profile.get_device().first_color_sensor()
+            # d.set_option(rs.option.global_time_enabled, 1)
+            try:
+                color_sensor = pipeline_profile.get_device().first_color_sensor()
+                color_sensor.set_option(rs.option.global_time_enabled, 1)
+            except:
+                for s in pipeline_profile.get_device().query_sensors():
+                    if s.get_info(rs.camera_info.name) == "Stereo Module":
+                        s.set_option(rs.option.global_time_enabled, 1)
+                        break
 
             # setup advanced mode
             if self.advanced_mode_config is not None:
@@ -463,23 +463,26 @@ class SingleRealsense(mp.Process):
                     if cmd == Command.SET_COLOR_OPTION.value:
 
                         # 수정함
-                        sensor = pipeline_profile.get_device().first_color_sensor()
-                        # sensor = None
-                        # for s in pipeline_profile.get_device().query_sensors():
-                        #     name = s.get_info(rs.camera_info.name)
-                        #     if name in ("RGB Camera", "Stereo Module"):
-                        #         sensor = s
-                        #         break
-
+                        # sensor = pipeline_profile.get_device().first_color_sensor()
                         option = rs.option(command['option_enum'])
                         value = float(command['option_value'])
+                        try:
+                            sensor = pipeline_profile.get_device().first_color_sensor()
+                            sensor.set_option(option, value)
+                        except:
+                            for sensor in pipeline_profile.get_device().query_sensors():
+                                if sensor.get_info(rs.camera_info.name) == "Stereo Module":
+                                    # sensor.set_option(rs.option.global_time_enabled, 1)
+                                    sensor.set_option(option, value)
+                                    break
 
-                        # 디버깅
-                        # if option != "Enable Auto White Balance":
-                        #     opt_range = sensor.get_option_range(option)
-                        #     print(f"[DEBUG] range = {opt_range.min} ~ {opt_range.max}, but {value}, option = {option}")
+                        # 위에 집어넣음
+                        # option = rs.option(command['option_enum'])
+                        # value = float(command['option_value'])
+                        # sensor.set_option(option, value)
 
-                        sensor.set_option(option, value)
+
+
                         # print('auto', sensor.get_option(rs.option.enable_auto_exposure))
                         # print('exposure', sensor.get_option(rs.option.exposure))
                         # print('gain', sensor.get_option(rs.option.gain))
