@@ -92,7 +92,8 @@ def ServoJ(joint_deg, time1=0.002, time2=0.1, gain=0.02, lpf_gain=0.2):
     msg = f"move_servo_j(jnt[{','.join(f'{j:.3f}' for j in joint_deg)}],{time1},{time2},{gain},{lpf_gain})"
     SendCOMMAND(msg, CMD_TYPE.MOVE)
     
-
+def ServoL(pose, time1=0.002, time2=0.1, gain=0.02, lpf_gain=0.2):
+    msg = f"move_servo_l(pnt[{','.join(f'{p:.3f}' for p in pose)}],{time1},{time2},{gain},{lpf_gain})"
 
 class Command(enum.Enum):
     STOP = 0
@@ -390,7 +391,7 @@ class RTDEInterpolationController(mp.Process):
                 times=[curr_t],     # [ time ]
                 poses=[curr_pose]   # [ [x,y,z,rx,ry,rz] ] ---> [ [x,y,z,rx,ry,rz,gripper] ]
             )
-            
+
             iter_idx = 0
             keep_running = True
 
@@ -415,7 +416,7 @@ class RTDEInterpolationController(mp.Process):
                 #     self.gain)
 
                 
-                # print("[DEBUG] curr_pose: ", curr_pose)
+                print("[DEBUG] curr_pose: ", curr_pose)
                 print("[DEBUG] pose_command: ", pose_command)
 
 
@@ -425,7 +426,8 @@ class RTDEInterpolationController(mp.Process):
 
 
                 # 매니퓰레이터 및 그리퍼 제어                
-                servoL_rb(rb10, current_joint, pose_command[:6], dt)
+                # servoL_rb(rb10, current_joint, pose_command[:6], dt)
+                ServoL(pose_command)
                 # self.gripper_control(pose_command[6:])
 
 
