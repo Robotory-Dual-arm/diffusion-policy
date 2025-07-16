@@ -1,4 +1,5 @@
 import pyrealsense2 as rs
+import numpy as np
 
 def list_connected_cameras():
     # Context 생성
