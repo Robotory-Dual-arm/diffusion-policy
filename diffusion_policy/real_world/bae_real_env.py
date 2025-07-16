@@ -90,7 +90,7 @@ class RealEnv:
         if shm_manager is None:
             shm_manager = SharedMemoryManager()
             shm_manager.start()
-        # 리스트로 나옴; camera_serial_numbers = [ ~ , ~, ...]
+
         if camera_serial_numbers is None:
             camera_serial_numbers = SingleRealsense.get_connected_devices_serial()
 
@@ -111,7 +111,7 @@ class RealEnv:
         
 
         # 실시간 시각화용 해상도 변환
-        rw, rh, col, row = optimal_row_cols(   # grid로 멀티 영상 띄우기
+        rw, rh, col, row = optimal_row_cols(  
             n_cameras=len(camera_serial_numbers),
             in_wh_ratio=obs_image_resolution[0]/obs_image_resolution[1], # 84/84 = 1
             max_resolution=multi_cam_vis_resolution   # (1280,720) 
@@ -126,7 +126,6 @@ class RealEnv:
             return data
 
 
-        # 비디오 녹화 관련 변수
         # raw 영상 녹화
         recording_transfrom = None
         recording_fps = video_capture_fps
@@ -146,7 +145,7 @@ class RealEnv:
             thread_count=thread_per_video)
 
 
-        # 카메라; shared memory 사용
+        # 카메라
         realsense = MultiRealsense(
             serial_numbers=camera_serial_numbers,
             shm_manager=shm_manager,
@@ -185,7 +184,7 @@ class RealEnv:
             j_init = None
 
 
-        # 로봇 객체
+        # 로봇
         robot = RTDEInterpolationController(
             shm_manager=shm_manager,
             robot_ip=robot_ip,
@@ -263,8 +262,8 @@ class RealEnv:
             self.multi_cam_vis.stop_wait()
 
     # ========= context manager ===========
-    def __enter__(self):   # 여기서 robot.run() 돌아감; with문이 시작될때 자동 실행됨!! 미쳤나
-        self.start()
+    def __enter__(self):   # with문이 시작될때 __enter__ 자동 실행됨!! 미쳤나
+        self.start()       # 여기서 robot.run() 돌아감
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):   

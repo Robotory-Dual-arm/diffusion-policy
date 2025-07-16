@@ -345,8 +345,8 @@ class RTDEInterpolationController(mp.Process):
         CobotInit()
 
         # Real or Simulation
-        SetProgramMode(PG_MODE.REAL)
-        # SetProgramMode(PG_MODE.SIMULATION)
+        # SetProgramMode(PG_MODE.REAL)
+        SetProgramMode(PG_MODE.SIMULATION)
 
 
         # global latest_gripper_qpos
@@ -415,12 +415,11 @@ class RTDEInterpolationController(mp.Process):
                 #     self.gain)
 
                 
-                # 디버깅
                 # print("[DEBUG] curr_pose: ", curr_pose)
-                # print("[DEBUG] pose_command: ", pose_command)
+                print("[DEBUG] pose_command: ", pose_command)
 
 
-                # 우리 로봇 제어              
+                # RB10 제어              
                 j = GetCurrentJoint()
                 current_joint = np.array([j.j0, j.j1, j.j2, j.j3, j.j4, j.j5]) * np.pi / 180   # rad
 
