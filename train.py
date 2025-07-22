@@ -1,7 +1,7 @@
 """
 Usage:
 Training:
-python train.py --config-name=train_diffusion_lowdim_workspace 
+python train.py --config-name=bae_train_diffusion_transformer_real_hybrid_workspace task=bae_push_image_abs
 """
 
 import sys

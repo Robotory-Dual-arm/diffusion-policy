@@ -31,6 +31,7 @@ def gripper_callback(msg):
     latest_gripper_qpos = [msg.gGWD]
     # print("[DEBUG] gripper callback received:", latest_gripper_qpos[0])
 
+
 def rot6d_to_rotvec(rot6d: np.ndarray) -> np.ndarray:
    
     a1 = rot6d[:3]
@@ -50,20 +51,41 @@ def rot6d_to_rotvec(rot6d: np.ndarray) -> np.ndarray:
     rot_vec = rot.as_rotvec()  
 
     return rot_vec
+    
+
+def se3_to_pos_rotvec(T: SE3):
+    """
+    T : spatialmath.SE3 or 4x4 homogeneous np.array
+    return: (pos[3], rotvec[3])  # rotvec in rad
+    """
+
+    if isinstance(T, SE3):
+        M = T.A  # 4x4 numpy array
+    else:
+        M = np.asarray(T)
+        assert M.shape == (4,4), "T must be 4x4"
+
+    pos = M[:3, 3].copy()
+    rotvec = R.from_matrix(M[:3, :3]).as_rotvec()
+    return np.hstack((pos, rotvec))
+    
 
 # current_joint: rad / target_pose: m, rad
-def servoL_rb(robot, current_joint, target_pose, dt, acc_limit=40.0):   # target_pose : rot_vec
+def servoL_rb(robot, current_joint, target_pose, dt, acc_pos_limit=40.0, acc_rot_limit=5.0):   # target_pose : rot_vec
     
-    current_pose = robot.fkine(current_joint)
+    current_pose = robot.fkine(current_joint)   # SE3
+
     pos     = np.array(target_pose[:3])   # m
     rot_vec = np.array(target_pose[3:])   # rad         
     rotm    = R.from_rotvec(rot_vec).as_matrix()   
+   
     T = np.eye(4)
     T[:3, :3] = rotm
     T[:3,  3] = pos
-
     target_pose = SE3(T)                   
     
+    current_pose_rotvec = R.from_matrix(current_pose.R).as_rotvec()
+    # print("[DEBUG] current_pose_rotvec:", current_pose_rotvec)
     # 디버깅
     # print("[DEBUG] current_pose:", current_pose)
     # print("[DEBUG] target_pose:", target_pose)
@@ -78,11 +100,18 @@ def servoL_rb(robot, current_joint, target_pose, dt, acc_limit=40.0):   # target
     J = robot.jacob0(current_joint)
     dq = np.linalg.pinv(J) @ err_6d
 
-    if np.linalg.norm(dq[:3]) > acc_limit:
-        dq[:3] *= acc_limit / np.linalg.norm(dq[:3])
+    # print("[DEBUG] acc pos:", np.linalg.norm(dq[:3]))
+    # print("[DEBUG] acc rot:", np.linalg.norm(dq[3:]))
+
+    if np.linalg.norm(dq[:3]) > acc_pos_limit:
+        dq[:3] *= acc_pos_limit / np.linalg.norm(dq[:3])
+    
+    if np.linalg.norm(dq[3:]) > acc_rot_limit:
+        dq[3:] *= acc_rot_limit / np.linalg.norm(dq[3:])
     
     next_joint = current_joint + dq * 0.15
     ServoJ(next_joint * 180 / np.pi, time1=dt)
+
 
 # times1: 제어시간, time2: lookahead time, gain: p-gain, lpf_gain: low pass filter gain
 # time2 -> 클수록 smooth, but 반응 느림 (0.02 < time2 < 0.2)
@@ -94,6 +123,9 @@ def ServoJ(joint_deg, time1=0.002, time2=0.1, gain=0.02, lpf_gain=0.2):
     
 def ServoL(pose, time1=0.002, time2=0.1, gain=0.02, lpf_gain=0.2):
     msg = f"move_servo_l(pnt[{','.join(f'{p:.3f}' for p in pose)}],{time1},{time2},{gain},{lpf_gain})"
+    SendCOMMAND(msg, CMD_TYPE.MOVE)
+
+
 
 class Command(enum.Enum):
     STOP = 0
@@ -377,12 +409,10 @@ class RTDEInterpolationController(mp.Process):
             dt = 1. / self.frequency
 
             # curr_pose = rtde_r.getActualTCPPose()   # 현재 pose 가져오기; 바꾸기!
-            p = GetCurrentTCP()
-            curr_pose = [p.x, p.y, p.z, p.rx, p.ry, p.rz]   # mm, deg
-            # curr_pose.append(latest_gripper_qpos[0])   
-            curr_pose = np.array(curr_pose)   
-            curr_pose[0:3] = curr_pose[0:3] / 1000.0   # mm -> m
-            curr_pose[3:6] = curr_pose[3:6] * np.pi / 180.0   # deg -> rad
+            j = GetCurrentJoint()
+            current_joint = np.array([j.j0, j.j1, j.j2, j.j3, j.j4, j.j5]) * np.pi / 180   # rad
+            curr_se3 = rb10.fkine(current_joint)   # m, rad (SE3)
+            curr_pose = se3_to_pos_rotvec(curr_se3)   
             
             # use monotonic time to make sure the control loop never go backward
             curr_t = time.monotonic()
@@ -416,18 +446,19 @@ class RTDEInterpolationController(mp.Process):
                 #     self.gain)
 
                 
-                print("[DEBUG] curr_pose: ", curr_pose)
-                print("[DEBUG] pose_command: ", pose_command)
+                # print("[DEBUG] curr_pose: ", curr_pose)
+                # print("[DEBUG] pose_command: ", pose_command)
 
 
                 # RB10 제어              
                 j = GetCurrentJoint()
                 current_joint = np.array([j.j0, j.j1, j.j2, j.j3, j.j4, j.j5]) * np.pi / 180   # rad
-
+                curr_se3 = rb10.fkine(current_joint)   # m, rad (SE3)
+                curr_pose = se3_to_pos_rotvec(curr_se3)   
 
                 # 매니퓰레이터 및 그리퍼 제어                
-                # servoL_rb(rb10, current_joint, pose_command[:6], dt)
-                ServoL(pose_command)
+                servoL_rb(rb10, current_joint, pose_command[:6], dt)   # servoJ
+                # ServoL(pose_command)                                 # servoL
                 # self.gripper_control(pose_command[6:])
 
 
@@ -437,13 +468,8 @@ class RTDEInterpolationController(mp.Process):
                 # for key in self.receive_keys:
                 #     state[key] = np.array(getattr(rtde_r, 'get'+key)())
                 
-                p = GetCurrentTCP()
-                curr_pose = [p.x, p.y, p.z, p.rx, p.ry, p.rz]   # mm, deg
-                # curr_pose.append(latest_gripper_qpos[0])
-                curr_pose = np.array(curr_pose)
-                curr_pose[0:3] = curr_pose[0:3] / 1000.0   # mm -> m
-                curr_pose[3:6] = curr_pose[3:6] * np.pi / 180.0   # deg -> rad
-                # print('[DEBUG] current pose:', curr_pose)
+
+
                 for key in self.receive_keys:
                     if key == 'robot_eef_pos':
                         state[key] = np.array(curr_pose[:3])   # 현재 pose; meter
@@ -511,7 +537,7 @@ class RTDEInterpolationController(mp.Process):
                         target_rotvec = rot6d_to_rotvec(target_pose[3:])   # 6d rotation -> rot_vec
                         target_pose = np.concatenate([target_position, target_rotvec])   # 3d position, rot_vec
 
-                        print('[DEBUG] target_pose', target_pose)
+                        # print('[DEBUG] target_pose', target_pose)
                         
                         # print('[DEBUG] current rot_vec', curr_pose[3:6])
                         # target_pose[:3] = curr_pose[:3] + target_pose[:3] * MAX_TRANS   # pose, meter

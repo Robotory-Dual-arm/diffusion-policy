@@ -729,6 +729,10 @@ def SendCOMMAND(str, cmd_type):
         CMDSock.send(str_space.encode('utf-8'))
         return True
 
+    if 'move_servo_l' in str:
+        CMDSock.send(str_space.encode('utf-8'))
+        return True
+    
     if cmd_type == CMD_TYPE.MOVE:
         while True:
             time.sleep(0.03)

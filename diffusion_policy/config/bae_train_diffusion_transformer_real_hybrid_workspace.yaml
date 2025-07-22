@@ -105,7 +105,7 @@ training:
   rollout_every: 50
   checkpoint_every: 50
   val_every: 1
-  sample_every: 5
+  sample_every: 5W
   # steps per epoch
   max_train_steps: null
   max_val_steps: null
@@ -125,7 +125,7 @@ checkpoint:
   topk:
     monitor_key: train_loss
     mode: min
-    k: 5
+    k: 20
     format_str: 'epoch={epoch:04d}-train_loss={train_loss:.3f}.ckpt'
   save_last_ckpt: True
   save_last_snapshot: False
