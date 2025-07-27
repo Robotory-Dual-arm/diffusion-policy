@@ -109,7 +109,7 @@ def servoL_rb(robot, current_joint, target_pose, dt, acc_pos_limit=40.0, acc_rot
     if np.linalg.norm(dq[3:]) > acc_rot_limit:
         dq[3:] *= acc_rot_limit / np.linalg.norm(dq[3:])
     
-    next_joint = current_joint + dq * 0.15
+    next_joint = current_joint + dq * 0.2
     ServoJ(next_joint * 180 / np.pi, time1=dt)
 
 
@@ -117,11 +117,11 @@ def servoL_rb(robot, current_joint, target_pose, dt, acc_pos_limit=40.0, acc_rot
 # time2 -> 클수록 smooth, but 반응 느림 (0.02 < time2 < 0.2)
 # gain -> 클수록 빠르게 반응, but 진동 발생 (p > 0)
 # lpf_gain -> 클수록 진동 감소, but 반응 느림 (0 < lpf_gain < 1)
-def ServoJ(joint_deg, time1=0.002, time2=0.1, gain=0.02, lpf_gain=0.2):
+def ServoJ(joint_deg, time1=0.002, time2=0.1, gain=0.005, lpf_gain=0.1):
     msg = f"move_servo_j(jnt[{','.join(f'{j:.3f}' for j in joint_deg)}],{time1},{time2},{gain},{lpf_gain})"
     SendCOMMAND(msg, CMD_TYPE.MOVE)
     
-def ServoL(pose, time1=0.002, time2=0.1, gain=0.02, lpf_gain=0.2):
+def ServoL(pose, time1=0.002, time2=0.1, gain=0.005, lpf_gain=0.1):
     msg = f"move_servo_l(pnt[{','.join(f'{p:.3f}' for p in pose)}],{time1},{time2},{gain},{lpf_gain})"
     SendCOMMAND(msg, CMD_TYPE.MOVE)
 
@@ -378,8 +378,8 @@ class RTDEInterpolationController(mp.Process):
         CobotInit()
 
         # Real or Simulation
-        # SetProgramMode(PG_MODE.REAL)
-        SetProgramMode(PG_MODE.SIMULATION)
+        SetProgramMode(PG_MODE.REAL)
+        # SetProgramMode(PG_MODE.SIMULATION)
 
 
         # global latest_gripper_qpos
@@ -537,7 +537,7 @@ class RTDEInterpolationController(mp.Process):
                         target_rotvec = rot6d_to_rotvec(target_pose[3:])   # 6d rotation -> rot_vec
                         target_pose = np.concatenate([target_position, target_rotvec])   # 3d position, rot_vec
 
-                        # print('[DEBUG] target_pose', target_pose)
+                        print('[DEBUG] target_pose', target_pose)
                         
                         # print('[DEBUG] current rot_vec', curr_pose[3:6])
                         # target_pose[:3] = curr_pose[:3] + target_pose[:3] * MAX_TRANS   # pose, meter

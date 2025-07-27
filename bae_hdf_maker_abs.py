@@ -1,6 +1,6 @@
 #!/home/vision/anaconda3/envs/robodiff/bin/python
 import sys
-sys.path.append('/home/vision/catkin_ws/src/diffusion_policy_test/src/diffusion-policy/diffusion_policy')
+sys.path.append('/home/vision/catkin_ws/src/diffusion_policy/diffusion-policy/diffusion_policy')
 import h5py
 import rospy
 import numpy as np
@@ -12,7 +12,7 @@ import pyrealsense2 as rs
 import cv2
 import time
 # 저장할때마다 저장 파일 이름 바꾸기!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!주의!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-f = h5py.File('/home/vision/catkin_ws/src/diffusion_policy_test/src/diffusion-policy/data/baetae/bae_push_image_abs.hdf5', 'w')
+f = h5py.File('/home/vision/catkin_ws/src/diffusion_policy/diffusion-policy/data/baetae/bae_push_image_abs_test.hdf5', 'w')
 data = f.create_group('data')
 i = 0
 
@@ -110,8 +110,8 @@ def get_image(pipeline0, pipeline1):
     if cv2.waitKey(1) & 0xFF == ord('x'):
         return None
     
-    image0 = cv2.cvtColor(image0.copy(), cv2.COLOR_BGR2RGB)
-    image1 = cv2.cvtColor(image1.copy(), cv2.COLOR_BGR2RGB)
+    # image0 = cv2.cvtColor(image0.copy(), cv2.COLOR_BGR2RGB)
+    # image1 = cv2.cvtColor(image1.copy(), cv2.COLOR_BGR2RGB)
 
     cv2.imshow('image0', image0)
     cv2.imshow('image1', image1)
@@ -125,7 +125,7 @@ def main():
     global i
     
     serials = ['126122270795', '117322071192']   # D405, D435
-    serials = None
+    # serials = None
     if serials == None:
         serials = get_device_serials()
     serial_d405 = serials[0]
@@ -146,8 +146,8 @@ def main():
     cv2.namedWindow('image0',  cv2.WINDOW_NORMAL)
     cv2.namedWindow('image1',  cv2.WINDOW_NORMAL)
 
-    cv2.resizeWindow('image0',  600, 600)  
-    cv2.resizeWindow('image1',  600, 600)
+    cv2.resizeWindow('image0',  400, 400)  
+    cv2.resizeWindow('image1',  400, 400)
 
     
     ToCB("192.168.111.50")
