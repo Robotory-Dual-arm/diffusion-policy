@@ -11,7 +11,7 @@ exp_name: "default"
 
 horizon: 16
 n_obs_steps: 2
-n_action_steps: 8
+n_action_steps: 6
 n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
@@ -41,7 +41,7 @@ policy:
   n_obs_steps: ${n_obs_steps}
   num_inference_steps: 8
 
-  crop_shape: [72, 72] # ch, cw 320x240 90%
+  crop_shape: [216, 288] # ch, cw 320x240 90%
   obs_encoder_group_norm: True
   eval_fixed_crop: True
 
@@ -105,7 +105,7 @@ training:
   rollout_every: 50
   checkpoint_every: 50
   val_every: 1
-  sample_every: 5W
+  sample_every: 5
   # steps per epoch
   max_train_steps: null
   max_val_steps: null

@@ -1,15 +1,15 @@
 name: bae_push_image_abs
 
-image_shape: [3, 84, 84]
-dataset_path: data/baetae/bae_push_image_abs_0717.hdf5
+image_shape: [3, 240, 320]
+dataset_path: data/baetae/bae_push_image_abs_0724.hdf5
 
 shape_meta: &shape_meta
   obs:
     image0:
-      shape: [3, 84, 84]
+      shape: [3, 240, 320]
       type: rgb
     image1:
-      shape: [3, 84, 84]
+      shape: [3, 240, 320]
       type: rgb
     robot_eef_pos:
       shape: [3]
