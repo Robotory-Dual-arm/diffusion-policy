@@ -51,6 +51,7 @@ class RealEnv:
             obs_image_resolution=(84,84),
             max_obs_buffer_size=30,
             # camera_serial_numbers=None,
+            # camera_serial_numbers=['117322071192', '126122270795'], # D435I, D405 
             camera_serial_numbers=['126122270795', '117322071192'], # D405, D435I
             # camera_serial_numbers=['231522070679', '117322071192'], # D435, D435I
             # camera_serial_numbers=None,
