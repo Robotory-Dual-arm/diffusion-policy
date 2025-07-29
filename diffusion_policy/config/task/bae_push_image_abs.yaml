@@ -1,7 +1,7 @@
 name: bae_push_image_abs
 
 image_shape: [3, 240, 320]
-dataset_path: data/baetae/bae_push_image_abs_0724.hdf5
+dataset_path: data/baetae/bae_push_image_abs_0728.hdf5
 
 shape_meta: &shape_meta
   obs:

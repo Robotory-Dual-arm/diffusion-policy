@@ -109,7 +109,7 @@ def servoL_rb(robot, current_joint, target_pose, dt, acc_pos_limit=40.0, acc_rot
     if np.linalg.norm(dq[3:]) > acc_rot_limit:
         dq[3:] *= acc_rot_limit / np.linalg.norm(dq[3:])
     
-    next_joint = current_joint + dq * 0.2
+    next_joint = current_joint + dq * 0.4
     ServoJ(next_joint * 180 / np.pi, time1=dt)
 
 

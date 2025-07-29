@@ -12,9 +12,12 @@ import pyrealsense2 as rs
 import cv2
 import time
 # 저장할때마다 저장 파일 이름 바꾸기!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!주의!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-f = h5py.File('/home/vision/catkin_ws/src/diffusion_policy/diffusion-policy/data/baetae/bae_push_image_abs_test.hdf5', 'w')
+f = h5py.File('/home/vision/catkin_ws/src/diffusion_policy/diffusion-policy/data/baetae/bae_push_image_abs_0728.hdf5', 'w')
+# f = h5py.File('/home/vision/catkin_ws/src/diffusion_policy/diffusion-policy/data/baetae/bae_push_image_abs_0727.hdf5', 'r+')
 data = f.create_group('data')
+# data = f['data']
 i = 0
+# i = 57
 
 def init_buffer():
     return {
@@ -101,8 +104,8 @@ def get_image(pipeline0, pipeline1):
     start_x = (w - CROP_SIZE) // 2
     image0 = color_image0[:, start_x:start_x+CROP_SIZE]   # CROP_SIZE = 480
     image1 = color_image1[:, start_x:start_x+CROP_SIZE]
-    image0 = cv2.resize(image0, (84, 84))
-    image1 = cv2.resize(image1, (84, 84))
+    image0 = cv2.resize(image0, (320, 240))
+    image1 = cv2.resize(image1, (320, 240))
     
     # cv2.imshow('image0', image0)
     # cv2.imshow('image1', image1)
@@ -113,8 +116,8 @@ def get_image(pipeline0, pipeline1):
     # image0 = cv2.cvtColor(image0.copy(), cv2.COLOR_BGR2RGB)
     # image1 = cv2.cvtColor(image1.copy(), cv2.COLOR_BGR2RGB)
 
-    cv2.imshow('image0', image0)
-    cv2.imshow('image1', image1)
+    # cv2.imshow('image0', image0)
+    # cv2.imshow('image1', image1)
 
     image = [image0, image1]
 
@@ -143,11 +146,11 @@ def main():
     config1.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
     pipeline1.start(config1)
 
-    cv2.namedWindow('image0',  cv2.WINDOW_NORMAL)
-    cv2.namedWindow('image1',  cv2.WINDOW_NORMAL)
+    # cv2.namedWindow('image0',  cv2.WINDOW_NORMAL)
+    # cv2.namedWindow('image1',  cv2.WINDOW_NORMAL)
 
-    cv2.resizeWindow('image0',  400, 400)  
-    cv2.resizeWindow('image1',  400, 400)
+    # cv2.resizeWindow('image0',  400, 400)  
+    # cv2.resizeWindow('image1',  400, 400)
 
     
     ToCB("192.168.111.50")
