@@ -1,7 +1,7 @@
 #!/home/vision/anaconda3/envs/robodiff/bin/python
 
 # 실행코드
-# python bae_eval_real_robot.py --input data/outputs/2025.07.28/checkpoints_cnn/checkpoints/epoch\=1100-train_loss\=0.000.ckpt --output data/results
+# python bae_eval_real_robot_dualarm.py --input data/outputs/2025.07.28/checkpoints_cnn/checkpoints/epoch\=1100-train_loss\=0.000.ckpt --output data/results
 """
 Usage:
 (robodiff)$ python eval_real_robot.py -i <ckpt_path> -o <save_dir> --robot_ip <ip_of_ur5>
@@ -37,7 +37,7 @@ import pathlib
 import skvideo.io
 from omegaconf import OmegaConf
 import scipy.spatial.transform as st
-from diffusion_policy.real_world.bae_real_env import RealEnv   # 새로 만듬
+from diffusion_policy.real_world.bae_real_env_dualarm import DualarmRealEnv   # 새로 만듬
 # from diffusion_policy.real_world.spacemouse_shared_memory import Spacemouse
 from diffusion_policy.common.precise_sleep import precise_wait
 from diffusion_policy.real_world.real_inference_util import (
@@ -113,10 +113,13 @@ def main(input, output, robot_ip, match_dataset, match_episode,
 
     # sharedmemory에 데이터들 쌓기; 같은 공유 공간 사용
     with SharedMemoryManager() as shm_manager:
-        with RealEnv(
+        with DualarmRealEnv(
             output_dir=output, 
             robot_ip=robot_ip, 
             frequency=frequency,   
+            # camera_serial_numbers=['117322071192', '126122270795'], # D435I, D405 
+            camera_serial_numbers=[몰라~], # D405, D435I
+            # camera_serial_numbers=['231522070679', '117322071192'], # D435, D435I
             n_obs_steps=n_obs_steps,   
             obs_image_resolution=obs_res, 
             obs_float32=True,   
@@ -161,7 +164,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                 result = policy.predict_action(obs_dict)   # {'action': ~ , 'action_pred': ~}
                 # 실제 실행할 action trajectory
                 action = result['action'][0].detach().to('cpu').numpy()   # [0]은 배치차원 제거, tensor --> np
-                assert action.shape[-1] == 9   # action 차원에 맞게 바꿔주기
+                assert action.shape[-1] == 18   # action 차원에 맞게 바꿔주기
                 del result
 
             print('Ready!')

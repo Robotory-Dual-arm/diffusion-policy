@@ -2,6 +2,7 @@
 Usage:
 Training:
 python train.py --config-name=bae_train_diffusion_transformer_real_hybrid_workspace task=bae_push_image_abs
+python train.py --config-name=bae_train_diffusion_unet_real_hybrid_workspace task=bae_dualarm_box_image_abs
 """
 
 import sys
