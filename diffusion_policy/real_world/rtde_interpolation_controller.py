@@ -85,11 +85,7 @@ def servoL_rb(robot, current_joint, target_pose, dt, acc_pos_limit=40.0, acc_rot
     target_pose = SE3(T)                   
     
     current_pose_rotvec = R.from_matrix(current_pose.R).as_rotvec()
-    # print("[DEBUG] current_pose_rotvec:", current_pose_rotvec)
-    # 디버깅
-    # print("[DEBUG] current_pose:", current_pose)
-    # print("[DEBUG] target_pose:", target_pose)
-
+  
     pose_error = current_pose.inv() * target_pose
 
     err_pos = target_pose.t - current_pose.t
@@ -99,9 +95,6 @@ def servoL_rb(robot, current_joint, target_pose, dt, acc_pos_limit=40.0, acc_rot
 
     J = robot.jacob0(current_joint)
     dq = np.linalg.pinv(J) @ err_6d
-
-    # print("[DEBUG] acc pos:", np.linalg.norm(dq[:3]))
-    # print("[DEBUG] acc rot:", np.linalg.norm(dq[3:]))
 
     if np.linalg.norm(dq[:3]) > acc_pos_limit:
         dq[:3] *= acc_pos_limit / np.linalg.norm(dq[:3])
@@ -113,18 +106,14 @@ def servoL_rb(robot, current_joint, target_pose, dt, acc_pos_limit=40.0, acc_rot
     ServoJ(next_joint * 180 / np.pi, time1=dt)
 
 
-# times1: 제어시간, time2: lookahead time, gain: p-gain, lpf_gain: low pass filter gain
-# time2 -> 클수록 smooth, but 반응 느림 (0.02 < time2 < 0.2)
-# gain -> 클수록 빠르게 반응, but 진동 발생 (p > 0)
-# lpf_gain -> 클수록 진동 감소, but 반응 느림 (0 < lpf_gain < 1)
 def ServoJ(joint_deg, time1=0.002, time2=0.1, gain=0.005, lpf_gain=0.1):
-    msg = f"move_servo_j(jnt[{','.join(f'{j:.3f}' for j in joint_deg)}],{time1},{time2},{gain},{lpf_gain})"
+    msg = f"move_servo_j(jnt[{','.join(f'{j:.3f}' for j in joint_deg)}],{time1},{time2},{gain},{lpf_gain})\n"
     SendCOMMAND(msg, CMD_TYPE.MOVE)
     
-def ServoL(pose, time1=0.002, time2=0.1, gain=0.005, lpf_gain=0.1):
-    msg = f"move_servo_l(pnt[{','.join(f'{p:.3f}' for p in pose)}],{time1},{time2},{gain},{lpf_gain})"
-    SendCOMMAND(msg, CMD_TYPE.MOVE)
 
+def ServoL(pose, time1=0.002, time2=0.1, gain=0.005, lpf_gain=0.1):
+    msg = f"move_servo_l(pnt[{','.join(f'{p:.3f}' for p in pose)}],{time1},{time2},{gain},{lpf_gain})\n"
+    SendCOMMAND(msg, CMD_TYPE.MOVE)
 
 
 class Command(enum.Enum):
@@ -378,8 +367,8 @@ class RTDEInterpolationController(mp.Process):
         CobotInit()
 
         # Real or Simulation
-        SetProgramMode(PG_MODE.REAL)
-        # SetProgramMode(PG_MODE.SIMULATION)
+        # SetProgramMode(PG_MODE.REAL)
+        SetProgramMode(PG_MODE.SIMULATION)
 
 
         # global latest_gripper_qpos
