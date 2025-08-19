@@ -1,16 +1,12 @@
 
-
-# import rospy
 import rclpy
 from rclpy.node import Node
 
 import spatialmath.base as smb
 from std_msgs.msg import Int32, Float64, String
+from sensor_msgs.msg import JointState
 
-# from diffusion_policy.rb10_api.cobot import * 
-# from diffusion_policy.rb import *
-
-# 두산
+import roboticstoolbox as rtb
 
 from scipy.spatial.transform import Rotation as R
 
@@ -107,18 +103,30 @@ def servoL_rb(robot, current_joint, target_pose, dt, acc_pos_limit=40.0, acc_rot
     ServoJ(next_joint * 180 / np.pi, time1=dt)
 
 
-# times1: 제어시간, time2: lookahead time, gain: p-gain, lpf_gain: low pass filter gain
-# time2 -> 클수록 smooth, but 반응 느림 (0.02 < time2 < 0.2)
-# gain -> 클수록 빠르게 반응, but 진동 발생 (p > 0)
-# lpf_gain -> 클수록 진동 감소, but 반응 느림 (0 < lpf_gain < 1)
-def ServoJ(joint_deg, time1=0.002, time2=0.1, gain=0.005, lpf_gain=0.1):
-    msg = f"move_servo_j(jnt[{','.join(f'{j:.3f}' for j in joint_deg)}],{time1},{time2},{gain},{lpf_gain})"
-    SendCOMMAND(msg, CMD_TYPE.MOVE)
-    
-def ServoL(pose, time1=0.002, time2=0.1, gain=0.005, lpf_gain=0.1):
-    msg = f"move_servo_l(pnt[{','.join(f'{p:.3f}' for p in pose)}],{time1},{time2},{gain},{lpf_gain})"
-    SendCOMMAND(msg, CMD_TYPE.MOVE)
+class Dualarm(Node):
+    def __init__(self):
+        super().__init__('dualarm_node')
+        
+        self.joint_name = [f"left_joint_{i}" for i in range(1,7)] + \
+                            [f"right_joint_{i}" for i in range(1,7)]
+        
+        self.subscriber = self.create_subscription(
+            JointState,
+            '/joint_states',
+            self.joint_callback,
+            10
+        )
 
+        self.publisher = self.create_publisher(
+            JointState,
+            '두산 조인트 명령?',
+            10
+        )
+
+    def joint_callback(self, msg):
+        global current_joint
+        current_joint = np.array(msg.position) # rad? deg?
+        쌸라쌰ㅕㄹ라 ㅋㅋ
 
 
 class Command(enum.Enum):
@@ -132,7 +140,6 @@ class DualarmInterpolationController(mp.Process):
     To ensure sending command to the robot with predictable latency
     this controller need its separate process (due to python GIL)
     """
-
 
     def __init__(self,
             shm_manager: SharedMemoryManager, 
@@ -201,58 +208,42 @@ class DualarmInterpolationController(mp.Process):
         self.soft_real_time = soft_real_time
         self.verbose = verbose
 
-        # build input queue; 예시 구조로부터 Queue 생성
+        # build input queue; action 담아놓을 메모리
         example = {
             'cmd': Command.SERVOL.value,
             # 'target_pose': np.zeros((6,), dtype=np.float64),
-            'target_pose': np.zeros((9,), dtype=np.float64),
+            'target_pose': np.zeros((18,), dtype=np.float64),
             'duration': 0.0,
             'target_time': 0.0
         }
-        input_queue = SharedMemoryQueue.create_from_examples(   # 액션 담아놓을 메모리
+        input_queue = SharedMemoryQueue.create_from_examples( 
             shm_manager=shm_manager,
             examples=example,
             buffer_size=256
         )
 
-        # build ring buffer
-        # if receive_keys is None:
-        #     receive_keys = [   # 여기에 내가 받을 로봇 Pose로 바꾸기
-        #         'ActualTCPPose',   # GetCurrentTCP
-        #         'ActualTCPSpeed',   # 없음
-        #         'ActualQ',   # GetCurrentJoint
-        #         'ActualQd',   # 없음
-
-        #         'TargetTCPPose',
-        #         'TargetTCPSpeed',
-        #         'TargetQ',
-        #         'TargetQd'
-        #     ]
+        # build ring buffer; state 담아놓을 메모리
         if receive_keys is None:
             receive_keys = [
-                'robot_eef_pos',   
-                'robot_eef_quat',
-                'robot_gripper_qpos'
+                'robot_pose_L',   
+                'robot_pose_R',
+                'robot_quat_L',
+                'robot_quat_R',
             ]
-
-        # rtde_r = RTDEReceiveInterface(hostname=robot_ip)   
-        # ToCB(ip=robot_ip)
-        # rb10 = RB10()   # 여기서는 굳이 필요없을듯
-
-        example = dict()
         
-        # for key in receive_keys:           
-        #     example[key] = np.array(getattr(rtde_r, 'get'+key)())   
+        example = dict()
         for key in receive_keys:
-            if key == 'robot_eef_pos':
+            if key == 'robot_pose_L':
                 example[key] = np.zeros((3,), dtype=np.float64)
-            elif key == 'robot_eef_quat':
+            elif key == 'robot_pose_R':
+                example[key] = np.zeros((3,), dtype=np.float64)
+            elif key == 'robot_quat_L':
                 example[key] = np.zeros((4,), dtype=np.float64)
-            # elif key == 'robot_gripper_qpos':
-            #     example[key] = np.zeros((1,), dtype=np.float64)
+            elif key == 'robot_quat_R':
+                example[key] = np.zeros((4,), dtype=np.float64)
 
         example['robot_receive_timestamp'] = time.time()
-        ring_buffer = SharedMemoryRingBuffer.create_from_examples(   # state 담아놓을 메모리
+        ring_buffer = SharedMemoryRingBuffer.create_from_examples(   
             shm_manager=shm_manager,
             examples=example,
             get_max_k=get_max_k,
@@ -260,12 +251,12 @@ class DualarmInterpolationController(mp.Process):
             put_desired_frequency=frequency
         )
 
+
         self.ready_event = mp.Event()  
         self.input_queue = input_queue
         self.ring_buffer = ring_buffer
         self.receive_keys = receive_keys
 
-        self.gripper_pub = None   # 그리퍼 제어용 퍼블리셔
 
     # ========= launch method ===========
     def start(self, wait=True):   
@@ -303,29 +294,28 @@ class DualarmInterpolationController(mp.Process):
         self.stop()
         
     # ========= command methods ============
-    def servoL(self, pose, duration=0.1):   # 안씀
-        """
-        duration: desired time to reach pose
-        """
-        assert self.is_alive()
-        assert(duration >= (1/self.frequency))
-        pose = np.array(pose)
-        assert pose.shape == (6,)   
+    # def servoL(self, pose, duration=0.1):   # 안씀
+    #     """
+    #     duration: desired time to reach pose
+    #     """
+    #     assert self.is_alive()
+    #     assert(duration >= (1/self.frequency))
+    #     pose = np.array(pose)
+    #     assert pose.shape == (6,)   
 
-        message = {
-            'cmd': Command.SERVOL.value,
-            'target_pose': pose,
-            'duration': duration
-        }
-        self.input_queue.put(message)
-
+    #     message = {
+    #         'cmd': Command.SERVOL.value,
+    #         'target_pose': pose,
+    #         'duration': duration
+    #     }
+    #     self.input_queue.put(message)
 
 
     def schedule_waypoint(self, pose, target_time):   # 이거 사용
         assert target_time > time.time()
         pose = np.array(pose)
         # assert pose.shape == (6,)
-        assert pose.shape == (9,)   
+        assert pose.shape == (18,)   
 
         message = {
             'cmd': Command.SCHEDULE_WAYPOINT.value,
@@ -354,17 +344,9 @@ class DualarmInterpolationController(mp.Process):
         # start rtde
         robot_ip = self.robot_ip
 
+        rclpy.init(args=None)
+        node = Dualarm()
 
-        ToCB(ip=robot_ip)
-        rb10 = RB10()
-        CobotInit()
-
-        # Real or Simulation
-        SetProgramMode(PG_MODE.REAL)
-        # SetProgramMode(PG_MODE.SIMULATION)
-
-
-       
 
         try:
             if self.verbose:   # False
@@ -415,11 +397,7 @@ class DualarmInterpolationController(mp.Process):
                 #     vel, acc, # dummy, not used by ur5
                 #     dt, 
                 #     self.lookahead_time, 
-                #     self.gain)
-
-                
-                # print("[DEBUG] curr_pose: ", curr_pose)
-                # print("[DEBUG] pose_command: ", pose_command)
+                #     self.gain
 
 
                 # RB10 제어              
@@ -428,31 +406,24 @@ class DualarmInterpolationController(mp.Process):
                 curr_se3 = rb10.fkine(current_joint)   # m, rad (SE3)
                 curr_pose = se3_to_pos_rotvec(curr_se3)   
 
-                # 매니퓰레이터 및 그리퍼 제어                
+                # 매니퓰레이터 제어                
                 servoL_rb(rb10, current_joint, pose_command[:6], dt)   # servoJ
-                # ServoL(pose_command)                                 # servoL
-                # self.gripper_control(pose_command[6:])
 
 
                 # 현재 State 저장
                 # update robot state; ringbuffer에 state 저장
                 state = dict()
-                # for key in self.receive_keys:
-                #     state[key] = np.array(getattr(rtde_r, 'get'+key)())
-                
-
 
                 for key in self.receive_keys:
-                    if key == 'robot_eef_pos':
-                        state[key] = np.array(curr_pose[:3])   # 현재 pose; meter
-                    elif key == 'robot_eef_quat':
-                        # state[key] = np.array(smb.r2q(curr_pose[3:6]))   # 현재 quat
-                        rot_vec = np.array(curr_pose[3:6])
-                        quat = R.from_rotvec(rot_vec).as_quat()   # rot_vec --> quat
-                        state[key] = np.array(quat)
-                    # elif key == 'robot_gripper_qpos':
-                    #     state[key] = np.array(curr_pose[6:])   # 현재 그리퍼 pose
-
+                    if key == 'robot_pose_L':
+                        state[key] = np.array(현재 포즈L)
+                    elif key == 'robot_pose_R':
+                        state[key] = np.array(현재 포즈R)
+                    elif key == 'robot_quat_L':
+                        state[key] = np.array(현재 쿼터L)
+                    elif key == 'robot_quat_R':
+                        state[key] = np.array(현재 쿼터R)
+                        
                 state['robot_receive_timestamp'] = time.time()
                 self.ring_buffer.put(state)   
 
@@ -460,7 +431,6 @@ class DualarmInterpolationController(mp.Process):
                 # fetch command from queue
                 try:
                     commands = self.input_queue.get_all()   # command 긁어옴
-                    # print('[DEBUG] commands', commands)
                     n_cmd = len(commands['cmd'])
                 except Empty:
                     n_cmd = 0
@@ -551,16 +521,9 @@ class DualarmInterpolationController(mp.Process):
                     print(f"[RTDEPositionalController] Actual frequency {1/(time.perf_counter() - t_start)}")
 
         finally:
-            # manditory cleanup
-            # decelerate
-            # rtde_c.servoStop()   # 끝내기; 바꾸기!
-
-            # # terminate
-            # rtde_c.stopScript()
-            # rtde_c.disconnect()
-            # rtde_r.disconnect()
-            MotionHalt()
-            DisConnectToCB()
+            # terminate
+            node.destroy_node()
+            rclpy.shutdown()
 
             self.ready_event.set()
 

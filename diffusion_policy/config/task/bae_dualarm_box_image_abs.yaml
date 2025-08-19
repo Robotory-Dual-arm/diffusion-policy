@@ -1,26 +1,26 @@
 name: bae_dualarm_box_image_abs
 
 image_shape: [3, 240, 320]
-dataset_path: data/baetae/??????????????????.hdf5
+dataset_path: data/baetae/diffusion_data_push_box.hdf5
 
 shape_meta: &shape_meta
   obs:
-    image0:
+    image0:   # Head camera 242422304502
       shape: [3, 240, 320]
       type: rgb
-    # image1:
-    #  shape: [3, 240, 320]
-    #  type: rgb
-    robot0_eef_pos:
+    image1:   # Front camera 336222070518
+     shape: [3, 240, 320]
+     type: rgb
+    robot_pose_L:
       shape: [3]
       type: low_dim
-    robot0_eef_quat:
+    robot_quat_L:
       shape: [4]
       type: low_dim
-    robot1_eef_pos:
+    robot_pose_R:
       shape: [3]
       type: low_dim
-    robot1_eef_quat:
+    robot_quat_R:
       shape: [4]
       type: low_dim
     # robot_gripper_qpos:

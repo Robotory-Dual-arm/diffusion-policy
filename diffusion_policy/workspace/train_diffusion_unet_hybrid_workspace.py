@@ -76,7 +76,7 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
         dataset: BaseImageDataset   # BaseImageDataset을 상속한 Class의 인스턴스
         dataset = hydra.utils.instantiate(cfg.task.dataset)   # config에서 task: dataset : 아래의 _targe_ Class가 호출되고 그 아래 파라미터들이 같이 들어감
         assert isinstance(dataset, BaseImageDataset)
-        # training용 data를 loㅈad하는 인스턴스; torch.utils.data 찾아보기
+        # training용 data를 load하는 인스턴스; torch.utils.data 찾아보기
         train_dataloader = DataLoader(dataset, **cfg.dataloader)   # config에서 dataloader: 아래 변수들 가져옴
         # data 정규화
         normalizer = dataset.get_normalizer()

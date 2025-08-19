@@ -117,9 +117,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
             output_dir=output, 
             robot_ip=robot_ip, 
             frequency=frequency,   
-            # camera_serial_numbers=['117322071192', '126122270795'], # D435I, D405 
-            camera_serial_numbers=[몰라~], # D405, D435I
-            # camera_serial_numbers=['231522070679', '117322071192'], # D435, D435I
+            camera_serial_numbers=['242422304502', '336222070518'], # head, front
             n_obs_steps=n_obs_steps,   
             obs_image_resolution=obs_res, 
             obs_float32=True,   
