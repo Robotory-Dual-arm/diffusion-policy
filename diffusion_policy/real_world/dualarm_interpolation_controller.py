@@ -65,7 +65,7 @@ def se3_to_pos_rotvec(T: SE3):
     
 
 # current_joint: rad / target_pose: m, rad
-def servoL_rb(robot, current_joint, target_pose, dt, acc_pos_limit=40.0, acc_rot_limit=5.0):   # target_pose : rot_vec
+def servoJ(robot, current_joint, target_pose, acc_pos_limit=40.0, acc_rot_limit=5.0):   # target_pose : rot_vec
     
     current_pose = robot.fkine(current_joint)   # SE3
 
@@ -99,8 +99,8 @@ def servoL_rb(robot, current_joint, target_pose, dt, acc_pos_limit=40.0, acc_rot
     if np.linalg.norm(dq[3:]) > acc_rot_limit:
         dq[3:] *= acc_rot_limit / np.linalg.norm(dq[3:])
     
-    next_joint = current_joint + dq * 0.4
-    ServoJ(next_joint * 180 / np.pi, time1=dt)
+    next_joint = current_joint + dq * 0.3
+    return next_joint   # rad 이거 맞나
 
 
 class Dualarm(Node):
@@ -110,24 +110,44 @@ class Dualarm(Node):
         self.joint_name = [f"left_joint_{i}" for i in range(1,7)] + \
                             [f"right_joint_{i}" for i in range(1,7)]
         
-        self.subscriber = self.create_subscription(
+        self.joint_subscriber = self.create_subscription(
             JointState,
             '/joint_states',
             self.joint_callback,
             10
         )
 
-        self.publisher = self.create_publisher(
+        self.joint_command_publisher_L = self.create_publisher(
             JointState,
-            '두산 조인트 명령?',
+            '/left_dsr_joint_controller/joint_state_command99999999',
+            10
+        )
+        self.joint_command_publisher_R = self.create_publisher(
+            JointState,
+            '/right_dsr_joint_controller/joint_state_command99999999',
             10
         )
 
     def joint_callback(self, msg):
-        global current_joint
-        current_joint = np.array(msg.position) # rad? deg?
-        쌸라쌰ㅕㄹ라 ㅋㅋ
+        global latest_joint_L, latest_joint_R
+    
+        joint_mapping = {n: p for n, p in zip(msg.name, msg.position)}
+        joint_position = [joint_mapping.get(j) for j in self.joint_name]
 
+        latest_joint_L = joint_position[:6]
+        latest_joint_R = joint_position[6:]
+
+    def joint_command_publish_L(self, joint_position):
+        msg = JointState()
+        msg.name = self.joint_name[:6]
+        msg.position = joint_position
+        self.joint_command_publisher_L.publish(msg)
+        
+    def joint_command_publish_R(self, joint_position):
+        msg = JointState()
+        msg.name = self.joint_name[6:]
+        msg.position = joint_position
+        self.joint_command_publisher_R.publish(msg)
 
 class Command(enum.Enum):
     STOP = 0
@@ -344,36 +364,61 @@ class DualarmInterpolationController(mp.Process):
         # start rtde
         robot_ip = self.robot_ip
 
+        urdf_path = "/home/baetae/diffusion-policy/data/baetae/m0609.white.urdf"
+        doosan_robot = rtb.ERobot.URDF(urdf_path)   
+
+        global latest_joint_L, latest_joint_R
+        latest_joint_L = None
+        latest_joint_R = None
         rclpy.init(args=None)
         node = Dualarm()
 
 
         try:
-            if self.verbose:   # False
-                print(f"[RTDEPositionalController] Connect to robot: {robot_ip}")
+            # if self.verbose:   # False
+            #     print(f"[RTDEPositionalController] Connect to robot: {robot_ip}")
 
-            
-            
             # init pose
-            if self.joints_init is not None:   # None
-                # assert rtde_c.moveJ(self.joints_init, self.joints_init_speed, 1.4)
-                MoveJ(self.joints_init, self.joints_init_speed, 1.4)
+            # if self.joints_init is not None:   # None
+            #     # assert rtde_c.moveJ(self.joints_init, self.joints_init_speed, 1.4)
+            #     MoveJ(self.joints_init, self.joints_init_speed, 1.4)
 
             # main loop
             dt = 1. / self.frequency
 
+            # current state; m, rad
             # curr_pose = rtde_r.getActualTCPPose()   # 현재 pose 가져오기; 바꾸기!
-            j = GetCurrentJoint()
-            current_joint = np.array([j.j0, j.j1, j.j2, j.j3, j.j4, j.j5]) * np.pi / 180   # rad
-            curr_se3 = rb10.fkine(current_joint)   # m, rad (SE3)
-            curr_pose = se3_to_pos_rotvec(curr_se3)   
+            # j = GetCurrentJoint()
+            # current_joint = np.array([j.j0, j.j1, j.j2, j.j3, j.j4, j.j5]) * np.pi / 180   # rad
+            # curr_se3 = rb10.fkine(current_joint)   # m, rad (SE3)
+            # curr_pose = se3_to_pos_rotvec(curr_se3)
+            curr_joint_L = latest_joint_L
+            curr_joint_R = latest_joint_R
+            curr_tcp_L = doosan_robot.fkine(curr_joint_L)
+            curr_tcp_R = doosan_robot.fkine(curr_joint_R)
+
+            curr_tcp_pose_L = curr_tcp_L.t
+            curr_tcp_pose_R = curr_tcp_R.t
+            curr_tcp_rotmat_L = curr_tcp_L.R
+            curr_tcp_rotmat_R = curr_tcp_R.R
+                
+            curr_tcp_quat_L = R.from_matrix(curr_tcp_rotmat_L).as_quat()
+            curr_tcp_quat_R = R.from_matrix(curr_tcp_rotmat_R).as_quat()
+                
+            curr_tcp_quat_L = np.array([-q if q[3] < 0 else q for q in curr_tcp_quat_L])
+            curr_tcp_quat_R = np.array([-q if q[3] < 0 else q for q in curr_tcp_quat_R])
             
+            curr_tcp_rotvec_L = R.from_quat(curr_tcp_quat_L).as_rotvec()
+            curr_tcp_rotvec_R = R.from_quat(curr_tcp_quat_R).as_rotvec()
+
+            curr_pose = np.concatenate([curr_tcp_pose_L, curr_tcp_rotvec_L, curr_tcp_pose_R, curr_tcp_rotvec_R])
+
             # use monotonic time to make sure the control loop never go backward
             curr_t = time.monotonic()
             last_waypoint_time = curr_t
-            pose_interp = PoseTrajectoryInterpolator(   # abs
+            pose_interp = PoseTrajectoryInterpolator(  
                 times=[curr_t],     # [ time ]
-                poses=[curr_pose]   # [ [x,y,z,rx,ry,rz] ] ---> [ [x,y,z,rx,ry,rz,gripper] ]
+                poses=[curr_pose]   # [ [x,y,z,rx,ry,rz] ]
             )
 
             iter_idx = 0
@@ -383,32 +428,53 @@ class DualarmInterpolationController(mp.Process):
 
             while keep_running:   # 루프 시작
                 # start control iteration
-                # t_start = rtde_c.initPeriod()   # 바꾸기! 
-
                 # send command to robot
                 t_now = time.monotonic()
                 # diff = t_now - pose_interp.times[-1]
                 # if diff > 0:
                 #     print('extrapolate', diff)
-                pose_command = pose_interp(t_now)   # 보간 해놓고 현재 시간의 목표 pose 가져옴
-                # vel = 0.5
-                # acc = 0.5
-                # assert rtde_c.servoL(pose_command,   # 로봇 제어 부분! 바꾸기!
-                #     vel, acc, # dummy, not used by ur5
-                #     dt, 
-                #     self.lookahead_time, 
-                #     self.gain
+                pose_command = pose_interp(t_now)   # 보간 해놓고 현재 시간의 목표 pose 가져옴 (pose_L, rotvec_L, pose_R, rotvec_R)
+            
+                # 두산 로봇 제어                
+                # pose_command 해체 
+                target_pose_L = pose_command[:3]
+                target_rotvec_L = pose_command[3:6]
+                target_pose_R = pose_command[6:9]
+                target_rotvec_R = pose_command[9:12]
+                target_quat_L = R.from_rotvec(target_rotvec_L).as_quat()
+                target_quat_R = R.from_rotvec(target_rotvec_R).as_quat()
+                
+                # 전처리
+                target_L = np.concatenate([target_pose_L, target_rotvec_L])
+                target_R = np.concatenate([target_pose_R, target_rotvec_R])
+                target_joint_L = servoJ(doosan_robot, latest_joint_L, target_L)
+                target_joint_R = servoJ(doosan_robot, latest_joint_R, target_R)
 
+                # 토픽발사
+                node.joint_command_publish_L(target_joint_L)
+                node.joint_command_publish_R(target_joint_R)
 
-                # RB10 제어              
-                j = GetCurrentJoint()
-                current_joint = np.array([j.j0, j.j1, j.j2, j.j3, j.j4, j.j5]) * np.pi / 180   # rad
-                curr_se3 = rb10.fkine(current_joint)   # m, rad (SE3)
-                curr_pose = se3_to_pos_rotvec(curr_se3)   
+                # current state
+                curr_joint_L = latest_joint_L
+                curr_joint_R = latest_joint_R
+                curr_tcp_L = doosan_robot.fkine(curr_joint_L)
+                curr_tcp_R = doosan_robot.fkine(curr_joint_R)
 
-                # 매니퓰레이터 제어                
-                servoL_rb(rb10, current_joint, pose_command[:6], dt)   # servoJ
+                curr_tcp_pose_L = curr_tcp_L.t
+                curr_tcp_pose_R = curr_tcp_R.t
+                curr_tcp_rotmat_L = curr_tcp_L.R
+                curr_tcp_rotmat_R = curr_tcp_R.R
+                    
+                curr_tcp_quat_L = R.from_matrix(curr_tcp_rotmat_L).as_quat()
+                curr_tcp_quat_R = R.from_matrix(curr_tcp_rotmat_R).as_quat()
+                    
+                curr_tcp_quat_L = np.array([-q if q[3] < 0 else q for q in curr_tcp_quat_L])
+                curr_tcp_quat_R = np.array([-q if q[3] < 0 else q for q in curr_tcp_quat_R])
+                
+                curr_tcp_rotvec_L = R.from_quat(curr_tcp_quat_L).as_rotvec()
+                curr_tcp_rotvec_R = R.from_quat(curr_tcp_quat_R).as_rotvec()
 
+                # curr_pose = np.concatenate([curr_tcp_pose_L, curr_tcp_rotvec_L, curr_tcp_pose_R, curr_tcp_rotvec_R])
 
                 # 현재 State 저장
                 # update robot state; ringbuffer에 state 저장
@@ -416,13 +482,13 @@ class DualarmInterpolationController(mp.Process):
 
                 for key in self.receive_keys:
                     if key == 'robot_pose_L':
-                        state[key] = np.array(현재 포즈L)
+                        state[key] = np.array(curr_tcp_pose_L)
                     elif key == 'robot_pose_R':
-                        state[key] = np.array(현재 포즈R)
+                        state[key] = np.array(curr_tcp_pose_R)
                     elif key == 'robot_quat_L':
-                        state[key] = np.array(현재 쿼터L)
+                        state[key] = np.array(curr_tcp_quat_L)
                     elif key == 'robot_quat_R':
-                        state[key] = np.array(현재 쿼터R)
+                        state[key] = np.array(curr_tcp_quat_R)
                         
                 state['robot_receive_timestamp'] = time.time()
                 self.ring_buffer.put(state)   
@@ -446,48 +512,41 @@ class DualarmInterpolationController(mp.Process):
                         keep_running = False
                         # stop immediately, ignore later commands
                         break
-                    elif cmd == Command.SERVOL.value:   # SERVOL: target_pose 실행 
-                        # since curr_pose always lag behind curr_target_pose
-                        # if we start the next interpolation with curr_pose
-                        # the command robot receive will have discontinouity 
-                        # and cause jittery robot behavior.
-                        target_pose = command['target_pose']  
-                        duration = float(command['duration']) 
-                        curr_time = t_now + dt
-                        t_insert = curr_time + duration
-                        pose_interp = pose_interp.drive_to_waypoint(
-                            pose=target_pose,
-                            time=t_insert,
-                            curr_time=curr_time,
-                            max_pos_speed=self.max_pos_speed,
-                            max_rot_speed=self.max_rot_speed
-                        )
-                        last_waypoint_time = t_insert
-                        if self.verbose:
-                            print("[RTDEPositionalController] New pose target:{} duration:{}s".format(
-                                target_pose, duration))
+                    # elif cmd == Command.SERVOL.value:   # SERVOL: target_pose 실행 
+                    #     # since curr_pose always lag behind curr_target_pose
+                    #     # if we start the next interpolation with curr_pose
+                    #     # the command robot receive will have discontinouity 
+                    #     # and cause jittery robot behavior.
+                    #     target_pose = command['target_pose']  
+                    #     duration = float(command['duration']) 
+                    #     curr_time = t_now + dt
+                    #     t_insert = curr_time + duration
+                    #     pose_interp = pose_interp.drive_to_waypoint(
+                    #         pose=target_pose,
+                    #         time=t_insert,
+                    #         curr_time=curr_time,
+                    #         max_pos_speed=self.max_pos_speed,
+                    #         max_rot_speed=self.max_rot_speed
+                    #     )
+                    #     last_waypoint_time = t_insert
+                    #     if self.verbose:
+                    #         print("[RTDEPositionalController] New pose target:{} duration:{}s".format(
+                    #             target_pose, duration))
                             
                     # 이걸로 제어 (n_cmd 1개씩 제어)
                     elif cmd == Command.SCHEDULE_WAYPOINT.value:
-                        target_pose = command['target_pose']   # abs; 3d pose, 6d rotation
+                        target_pose = command['target_pose']   # abs; (pose_L, rot6d_L, pose_R, rot6d_R)
 
-                        # print('[DEBUG] target_pose_before', target_pose)
-
-                        # target_pose[:3] = target_pose[:3] * 1000.0   # m -> mm
+                        target_position_L = target_pose[:3]   # 3d position, m
+                        target_position_R = target_pose[9:12]   # 3d position, m
+                        target_rotvec_L = rot6d_to_rotvec(target_pose[3:9])   # 6d rotation -> rot_vec
+                        target_rotvec_R = rot6d_to_rotvec(target_pose[12:18])   # 6d rotation -> rot_vec
                         
-                        target_position = target_pose[:3]   # 3d position, meter
-                        target_rotvec = rot6d_to_rotvec(target_pose[3:])   # 6d rotation -> rot_vec
-                        target_pose = np.concatenate([target_position, target_rotvec])   # 3d position, rot_vec
-
-                        print('[DEBUG] target_pose', target_pose)
+                        target_pose = np.concatenate([target_position_L, target_rotvec_L, target_position_R, target_rotvec_R])   
                         
-                        # print('[DEBUG] current rot_vec', curr_pose[3:6])
-                        # target_pose[:3] = curr_pose[:3] + target_pose[:3] * MAX_TRANS   # pose, meter
-                        # target_pose[3:6] = (R.from_rotvec(target_pose[3:6] * MAX_ROT) * R.from_rotvec(curr_pose[3:6])).as_rotvec()   # rotation, rad
-                        # target_pose[6] = curr_pose[6] + target_pose[6] * MAX_GRIP    # gripper
 
-                        # print('[DEBUG] target rot_vec', target_pose[3:6])
-
+                        # print('[DEBUG] target_pose', target_pose)
+                        
                         target_time = float(command['target_time'])   # time.time 기준
                         # translate global time to monotonic time
                         target_time = time.monotonic() - time.time() + target_time   # time.monotonic 기준
@@ -506,7 +565,6 @@ class DualarmInterpolationController(mp.Process):
                         break
                 
                 # regulate frequency
-                # rtde_c.waitPeriod(t_start)
                 t_elapsed = time.monotonic() - t_start
                 sleep_time = dt - t_elapsed
                 if sleep_time > 0:

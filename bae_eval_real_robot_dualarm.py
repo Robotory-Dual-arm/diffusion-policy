@@ -38,7 +38,6 @@ import skvideo.io
 from omegaconf import OmegaConf
 import scipy.spatial.transform as st
 from diffusion_policy.real_world.bae_real_env_dualarm import DualarmRealEnv   # 새로 만듬
-# from diffusion_policy.real_world.spacemouse_shared_memory import Spacemouse
 from diffusion_policy.common.precise_sleep import precise_wait
 from diffusion_policy.real_world.real_inference_util import (
     get_real_obs_resolution, 
