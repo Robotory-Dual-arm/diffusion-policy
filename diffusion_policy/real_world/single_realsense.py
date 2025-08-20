@@ -289,12 +289,12 @@ class SingleRealsense(mp.Process):
         if self.enable_color:
             rs_config.enable_stream(rs.stream.color, 
                 w, h, rs.format.bgr8, fps)
-        if self.enable_depth:
-            rs_config.enable_stream(rs.stream.depth, 
-                w, h, rs.format.z16, fps)
-        if self.enable_infrared:
-            rs_config.enable_stream(rs.stream.infrared,
-                w, h, rs.format.y8, fps)
+        # if self.enable_depth:
+        #     rs_config.enable_stream(rs.stream.depth, 
+        #         w, h, rs.format.z16, fps)
+        # if self.enable_infrared:
+        #     rs_config.enable_stream(rs.stream.infrared,
+        #         w, h, rs.format.y8, fps)
         
         try:
             rs_config.enable_device(self.serial_number)
@@ -302,6 +302,17 @@ class SingleRealsense(mp.Process):
             # start pipeline
             pipeline = rs.pipeline()
             pipeline_profile = pipeline.start(rs_config)
+
+            # 될때까지 받기
+            for i in range(3):
+                try: 
+                    pipeline.wait_for_frames(timeout_ms=1000)
+                    # print(f"Realsense camera {serial} initialized. try {i}")
+                except:
+                    pipeline.stop()
+                    pipeline.start(rs_config)
+                    pipeline.wait_for_frames()
+                    # print(f"Realsense camera {serial} re-initialized. except {i}")
 
             # 디버깅
             device = pipeline_profile.get_device()
@@ -377,12 +388,12 @@ class SingleRealsense(mp.Process):
                     data['camera_capture_timestamp'] = t
                     # print('device', time.time() - t)
                     # print(color_frame.get_frame_timestamp_domain())
-                if self.enable_depth:
-                    data['depth'] = np.asarray(
-                        frameset.get_depth_frame().get_data())
-                if self.enable_infrared:
-                    data['infrared'] = np.asarray(
-                        frameset.get_infrared_frame().get_data())
+                # if self.enable_depth:
+                #     data['depth'] = np.asarray(
+                #         frameset.get_depth_frame().get_data())
+                # if self.enable_infrared:
+                #     data['infrared'] = np.asarray(
+                #         frameset.get_infrared_frame().get_data())
                 
                 # apply transform
                 put_data = data

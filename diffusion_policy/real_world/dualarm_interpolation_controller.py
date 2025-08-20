@@ -2,6 +2,7 @@
 import rclpy
 from rclpy.node import Node
 
+from spatialmath import SE3
 import spatialmath.base as smb
 from std_msgs.msg import Int32, Float64, String
 from sensor_msgs.msg import JointState
@@ -364,7 +365,7 @@ class DualarmInterpolationController(mp.Process):
         # start rtde
         robot_ip = self.robot_ip
 
-        urdf_path = "/home/baetae/diffusion-policy/data/baetae/m0609.white.urdf"
+        urdf_path = "/home/vision/dualarm_ws/src/doosan-robot2/dsr_description2/urdf/m0609.white.urdf"
         doosan_robot = rtb.ERobot.URDF(urdf_path)   
 
         global latest_joint_L, latest_joint_R

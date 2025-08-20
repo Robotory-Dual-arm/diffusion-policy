@@ -71,7 +71,7 @@ class DualarmRealEnv:
             # vis params
             enable_multi_cam_vis=False,   
             # multi_cam_vis_resolution=(1280,720),
-            multi_cam_vis_resolution=(320,240)
+            multi_cam_vis_resolution=(320,240),
             # shared memory
             shm_manager=None
             ):
