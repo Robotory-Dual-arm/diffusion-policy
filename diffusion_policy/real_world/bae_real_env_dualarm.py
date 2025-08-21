@@ -30,9 +30,10 @@ from diffusion_policy.common.cv2_util import (
 # }
 DEFAULT_OBS_KEY_MAP = {
     # robot
-    'robot_eef_pos': 'robot_eef_pos',
-    'robot_eef_quat': 'robot_eef_quat',
-    # 'robot_gripper_qpos': 'robot_gripper_qpos',
+    'robot_pose_L': 'robot_pose_L',
+    'robot_pose_R': 'robot_pose_R',
+    'robot_quat_L': 'robot_quat_L',
+    'robot_quat_R': 'robot_quat_R',
 
     # timestamps
     'step_idx': 'step_idx',

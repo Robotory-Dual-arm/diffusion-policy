@@ -100,7 +100,7 @@ def servoJ(robot, current_joint, target_pose, acc_pos_limit=40.0, acc_rot_limit=
     if np.linalg.norm(dq[3:]) > acc_rot_limit:
         dq[3:] *= acc_rot_limit / np.linalg.norm(dq[3:])
     
-    next_joint = current_joint + dq * 0.3
+    next_joint = current_joint + dq * 0.2
     return next_joint   # rad 이거 맞나
 
 
