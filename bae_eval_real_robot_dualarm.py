@@ -66,7 +66,6 @@ def main(input, output, robot_ip, match_dataset, match_episode,
     vis_camera_idx, init_joints, 
     steps_per_inference, max_duration,
     frequency, command_latency):
-    
 
     # load checkpoint; checkpoint의 cfg 및 파라미터들 다 가져옴
     ckpt_path = input
@@ -139,27 +138,29 @@ def main(input, output, robot_ip, match_dataset, match_episode,
             # env.realsense.set_white_balance(white_balance=5900)
 
             print("Waiting for realsense")
-            time.sleep(1.0)
+            time.sleep(2.0)
 
             print("Warming up policy inference")
             
             # obs 받아오기
             obs = env.get_obs()
+            # print("[DEBUG] obs:", obs)
 
             with torch.no_grad():
                 policy.reset()
-
+                print("[DEBUG] 111111111111")
                 # 받은 obs에서 image 정규화 및 다듬기, pose 다듬기
                 obs_dict_np = get_real_obs_dict(
                     env_obs=obs, shape_meta=cfg.task.shape_meta)
-                
+                print("[DEBUG] 22222222222222")
                 # shape_meta 계층구조는 유지하면서 np --> tensor로 변환, 텐서 배치차원 추가
                 obs_dict = dict_apply(obs_dict_np, 
                     lambda x: torch.from_numpy(x).unsqueeze(0).to(device))
-                
+                print("[DEBUG] 33333333333333")
                 # obs로 action 예측
                 result = policy.predict_action(obs_dict)   # {'action': ~ , 'action_pred': ~}
                 # 실제 실행할 action trajectory
+                print("[DEBUG] 44444444444444444")
                 action = result['action'][0].detach().to('cpu').numpy()   # [0]은 배치차원 제거, tensor --> np
                 assert action.shape[-1] == 18   # action 차원에 맞게 바꿔주기
                 del result

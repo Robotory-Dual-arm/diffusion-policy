@@ -282,10 +282,14 @@ class SingleRealsense(mp.Process):
         cv2.setNumThreads(1)
 
         w, h = self.resolution   # 640, 480
+        # w, h = 320, 240
         fps = self.capture_fps
-        align = rs.align(rs.stream.color)
+        
+        # align = rs.align(rs.stream.color)
         # Enable the streams from all the intel realsense devices
         rs_config = rs.config()
+        rs_config.enable_device(self.serial_number)
+        print("[DEBUG] w,h =", w, h)
         if self.enable_color:
             rs_config.enable_stream(rs.stream.color, 
                 w, h, rs.format.bgr8, fps)
@@ -295,13 +299,21 @@ class SingleRealsense(mp.Process):
         # if self.enable_infrared:
         #     rs_config.enable_stream(rs.stream.infrared,
         #         w, h, rs.format.y8, fps)
-        
+        time.sleep(3)
+
         try:
-            rs_config.enable_device(self.serial_number)
+            # rs_config.enable_device(self.serial_number)
 
             # start pipeline
             pipeline = rs.pipeline()
+            # try:
             pipeline_profile = pipeline.start(rs_config)
+            # except RuntimeError:
+            #     print("[DEBUG] Restart realsense")
+            #     time.sleep(1)
+            #     pipeline.stop()
+            #     pipeline = rs.pipeline()
+            #     pipeline.start(rs_config)
 
             # 될때까지 받기
             for i in range(3):
@@ -349,14 +361,14 @@ class SingleRealsense(mp.Process):
             for i, name in enumerate(order):
                 self.intrinsics_array.get()[i] = getattr(intr, name)
 
-            if self.enable_depth:
-                depth_sensor = pipeline_profile.get_device().first_depth_sensor()
-                depth_scale = depth_sensor.get_depth_scale()
-                self.intrinsics_array.get()[-1] = depth_scale
+            # if self.enable_depth:
+            #     depth_sensor = pipeline_profile.get_device().first_depth_sensor()
+            #     depth_scale = depth_sensor.get_depth_scale()
+            #     self.intrinsics_array.get()[-1] = depth_scale
             
             # one-time setup (intrinsics etc, ignore for now)
-            if self.verbose:
-                print(f'[SingleRealsense {self.serial_number}] Main loop started.')
+            # if self.verbose:
+            #     print(f'[SingleRealsense {self.serial_number}] Main loop started.')
 
             # put frequency regulation
             put_idx = None
@@ -371,7 +383,7 @@ class SingleRealsense(mp.Process):
                 frameset = pipeline.wait_for_frames()
                 receive_time = time.time()
                 # align frames to color
-                frameset = align.process(frameset)
+                # frameset = align.process(frameset)
 
                 # 디버깅
                 # print(f"[DEBUG]: {pipeline_profile.get_device().get_info(rs.camera_info.name)}, {self.serial_number} 카메라 도는중")
@@ -383,6 +395,8 @@ class SingleRealsense(mp.Process):
                 data['camera_capture_timestamp'] = frameset.get_timestamp() / 1000
                 if self.enable_color:
                     color_frame = frameset.get_color_frame()
+
+
                     data['color'] = np.asarray(color_frame.get_data())
                     t = color_frame.get_timestamp() / 1000
                     data['camera_capture_timestamp'] = t

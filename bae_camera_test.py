@@ -1,85 +1,76 @@
 #!/usr/bin/env python3
-# Minimal dual RealSense RGB viewer (640x480 @ 30fps).
-# - Auto-picks the first two connected RealSense devices (no CLI flags).
-# - Shows two windows: cam0 (left), cam1 (right).
-# - RGB only. Press ESC to quit.
-
-import sys
 import time
-import numpy as np
 import cv2
+import numpy as np
+import pyrealsense2 as rs
+import threading
 
-try:
-    import pyrealsense2 as rs
-except Exception as e:
-    print("Failed to import pyrealsense2. Install librealsense + pyrealsense2.", file=sys.stderr)
-    raise
+# ---------- 단일 카메라용 클래스 ----------
+class Pipeline:
+    def __init__(self, serial):
+        self.serial = serial
+        self.pipeline = rs.pipeline()
+        self.config = rs.config()
+        self.config.enable_device(serial)
+        self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
 
-def main():
-    ctx = rs.context()
-    devs = ctx.query_devices()
-    if len(devs) < 2:
-        print("Need at least TWO RealSense devices connected.")
-        for d in devs:
-            print(" -", d.get_info(rs.camera_info.serial_number),
-                  d.get_info(rs.camera_info.name))
-        sys.exit(1)
+        # start pipeline
+        self.pipeline.start(self.config)
 
-    serial0 = devs[0].get_info(rs.camera_info.serial_number)
-    serial1 = devs[1].get_info(rs.camera_info.serial_number)
-    print("Using devices:", serial0, "and", serial1)
+        # 워밍업/재시도 루프 (안정화용)
+        
+        self.pipeline.wait_for_frames(timeout_ms=1000)
+            
 
-    # Create pipelines and configs for RGB streams
-    pipe0, cfg0 = rs.pipeline(), rs.config()
-    cfg0.enable_device(serial0)
-    cfg0.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+        print(f"[INFO] Realsense camera {serial} initialized.")
 
-    pipe1, cfg1 = rs.pipeline(), rs.config()
-    cfg1.enable_device(serial1)
-    cfg1.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+    def read(self, timeout_ms=1000):
+        frames = self.pipeline.wait_for_frames(timeout_ms)
+        color = frames.get_color_frame()
+        if not color:
+            raise RuntimeError(f"No color frame from {self.serial}")
+        return np.asanyarray(color.get_data())
 
-    # Start
-    prof0 = pipe0.start(cfg0)
-    prof1 = pipe1.start(cfg1)
+    def stop(self):
+        try:
+            self.pipeline.stop()
+        except:
+            pass
 
-    # Small warmup
-    for _ in range(10):
-        pipe0.poll_for_frames()
-        pipe1.poll_for_frames()
-        time.sleep(0.01)
 
-    cv2.namedWindow("cam0", cv2.WINDOW_NORMAL)
-    cv2.namedWindow("cam1", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("cam0", 640, 480)
-    cv2.resizeWindow("cam1", 640, 480)
+# ---------- 두 대 카메라 띄우기 ----------
+def show_camera(cam: Pipeline, win_name: str):
+    while True:
+        try:
+            img = cam.read()
+        except Exception as e:
+            img = np.zeros((480,640,3), dtype=np.uint8)
+            cv2.putText(img, str(e), (20,40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
 
-    print("Press ESC to exit.")
-    try:
-        while True:
-            f0 = pipe0.wait_for_frames(1000)
-            f1 = pipe1.wait_for_frames(1000)
+        cv2.imshow(win_name, img)
+        if cv2.waitKey(1) & 0xFF == 27:  # ESC로 종료
+            break
+    cam.stop()
 
-            c0 = f0.get_color_frame()
-            c1 = f1.get_color_frame()
-
-            if not c0 or not c1:
-                continue
-
-            img0 = np.asanyarray(c0.get_data())
-            img1 = np.asanyarray(c1.get_data())
-
-            cv2.imshow("cam0", img0)
-            cv2.imshow("cam1", img1)
-
-            if (cv2.waitKey(1) & 0xFF) == 27:
-                break
-    finally:
-        try: pipe0.stop()
-        except Exception: pass
-        try: pipe1.stop()
-        except Exception: pass
-        cv2.destroyAllWindows()
-        time.sleep(0.2)
 
 if __name__ == "__main__":
-    main()
+    ctx = rs.context()
+    devices = ctx.query_devices()
+    if len(devices) < 2:
+        print("카메라 두 대가 필요합니다.")
+        exit(1)
+
+    s0 = devices[0].get_info(rs.camera_info.serial_number)
+    s1 = devices[1].get_info(rs.camera_info.serial_number)
+
+    cam0 = Pipeline(s0)
+    cam1 = Pipeline(s1)
+
+    # 스레드로 동시에 띄우기
+    t0 = threading.Thread(target=show_camera, args=(cam0,"cam0"), daemon=True)
+    t1 = threading.Thread(target=show_camera, args=(cam1,"cam1"), daemon=True)
+    t0.start(); t1.start()
+
+    t0.join(); t1.join()
+    cv2.destroyAllWindows()

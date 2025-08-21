@@ -48,7 +48,7 @@ class DualarmRealEnv:
             frequency=20,
             n_obs_steps=2,
             # obs
-            obs_image_resolution=(84,84),
+            obs_image_resolution=(320.240),
             max_obs_buffer_size=30,
             camera_serial_numbers=None,
             # camera_serial_numbers=None,
@@ -63,7 +63,7 @@ class DualarmRealEnv:
             # video capture params
             video_capture_fps=30,
             # video_capture_resolution=(1280,720),
-            video_capture_resolution=(320,240),   
+            video_capture_resolution=(640,480),   
             # saving params
             record_raw_video=False,   
             thread_per_video=2,
@@ -261,7 +261,7 @@ class DualarmRealEnv:
             self.multi_cam_vis.stop_wait()
 
     # ========= context manager ===========
-    def __enter__(self):   # with문이 시작될때 __enter__ 자동 실행됨!! 미쳤나
+    def __enter__(self):   # with문이 시작될때 __enter__ 자동 실행됨
         self.start()       # 여기서 robot.run() 돌아감
         return self
     
@@ -429,6 +429,7 @@ class DualarmRealEnv:
     
     def end_episode(self):
         "Stop recording"
+
         assert self.is_ready
         
         # stop video recorder

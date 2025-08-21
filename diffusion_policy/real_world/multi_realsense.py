@@ -96,6 +96,7 @@ class MultiRealsense:
             put_start_time = time.time()
         for camera in self.cameras.values():
             camera.start(wait=False, put_start_time=put_start_time)
+            time.sleep(0.5)
         
         if wait:
             self.start_wait()

@@ -1,6 +1,7 @@
 
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import SingleThreadedExecutor
 
 from spatialmath import SE3
 import spatialmath.base as smb
@@ -8,7 +9,6 @@ from std_msgs.msg import Int32, Float64, String
 from sensor_msgs.msg import JointState
 
 import roboticstoolbox as rtb
-
 from scipy.spatial.transform import Rotation as R
 
 import os
@@ -141,12 +141,14 @@ class Dualarm(Node):
     def joint_command_publish_L(self, joint_position):
         msg = JointState()
         msg.name = self.joint_name[:6]
+        joint_position = [float(x) for x in joint_position]
         msg.position = joint_position
         self.joint_command_publisher_L.publish(msg)
         
     def joint_command_publish_R(self, joint_position):
         msg = JointState()
         msg.name = self.joint_name[6:]
+        joint_position = [float(x) for x in joint_position]
         msg.position = joint_position
         self.joint_command_publisher_R.publish(msg)
 
@@ -277,7 +279,7 @@ class DualarmInterpolationController(mp.Process):
         self.input_queue = input_queue
         self.ring_buffer = ring_buffer
         self.receive_keys = receive_keys
-
+        print("[DEBUG] Robot Controller initialized")
 
     # ========= launch method ===========
     def start(self, wait=True):   
@@ -361,7 +363,7 @@ class DualarmInterpolationController(mp.Process):
         if self.soft_real_time:
             os.sched_setscheduler(
                 0, os.SCHED_RR, os.sched_param(20))
-
+        print("[DEBUG] Robot Running")
         # start rtde
         robot_ip = self.robot_ip
 
@@ -373,9 +375,11 @@ class DualarmInterpolationController(mp.Process):
         latest_joint_R = None
         rclpy.init(args=None)
         node = Dualarm()
-
+        # exec = SingleThreadedExecutor()
+        # exec.add_node(node)
 
         try:
+            rclpy.spin_once(node)
             # if self.verbose:   # False
             #     print(f"[RTDEPositionalController] Connect to robot: {robot_ip}")
 
@@ -395,6 +399,7 @@ class DualarmInterpolationController(mp.Process):
             # curr_pose = se3_to_pos_rotvec(curr_se3)
             curr_joint_L = latest_joint_L
             curr_joint_R = latest_joint_R
+
             curr_tcp_L = doosan_robot.fkine(curr_joint_L)
             curr_tcp_R = doosan_robot.fkine(curr_joint_R)
 
@@ -405,10 +410,12 @@ class DualarmInterpolationController(mp.Process):
                 
             curr_tcp_quat_L = R.from_matrix(curr_tcp_rotmat_L).as_quat()
             curr_tcp_quat_R = R.from_matrix(curr_tcp_rotmat_R).as_quat()
-                
-            curr_tcp_quat_L = np.array([-q if q[3] < 0 else q for q in curr_tcp_quat_L])
-            curr_tcp_quat_R = np.array([-q if q[3] < 0 else q for q in curr_tcp_quat_R])
-            
+
+            if curr_tcp_quat_L[3] < 0:
+                curr_tcp_quat_L = -curr_tcp_quat_L
+            if curr_tcp_quat_R[3] < 0:
+                curr_tcp_quat_R = -curr_tcp_quat_R
+
             curr_tcp_rotvec_L = R.from_quat(curr_tcp_quat_L).as_rotvec()
             curr_tcp_rotvec_R = R.from_quat(curr_tcp_quat_R).as_rotvec()
 
@@ -428,6 +435,7 @@ class DualarmInterpolationController(mp.Process):
             t_start = time.monotonic()   # 수동 제어 주기 맞추기
 
             while keep_running:   # 루프 시작
+                rclpy.spin_once(node)
                 # start control iteration
                 # send command to robot
                 t_now = time.monotonic()
@@ -452,6 +460,7 @@ class DualarmInterpolationController(mp.Process):
                 target_joint_R = servoJ(doosan_robot, latest_joint_R, target_R)
 
                 # 토픽발사
+                # print("[DEBUG] target_joint:",target_joint_L*180/np.pi, target_joint_R*180/np.pi)
                 node.joint_command_publish_L(target_joint_L)
                 node.joint_command_publish_R(target_joint_R)
 
@@ -469,8 +478,10 @@ class DualarmInterpolationController(mp.Process):
                 curr_tcp_quat_L = R.from_matrix(curr_tcp_rotmat_L).as_quat()
                 curr_tcp_quat_R = R.from_matrix(curr_tcp_rotmat_R).as_quat()
                     
-                curr_tcp_quat_L = np.array([-q if q[3] < 0 else q for q in curr_tcp_quat_L])
-                curr_tcp_quat_R = np.array([-q if q[3] < 0 else q for q in curr_tcp_quat_R])
+                if curr_tcp_quat_L[3] < 0:
+                    curr_tcp_quat_L = -curr_tcp_quat_L
+                if curr_tcp_quat_R[3] < 0:
+                    curr_tcp_quat_R = -curr_tcp_quat_R
                 
                 curr_tcp_rotvec_L = R.from_quat(curr_tcp_quat_L).as_rotvec()
                 curr_tcp_rotvec_R = R.from_quat(curr_tcp_quat_R).as_rotvec()
