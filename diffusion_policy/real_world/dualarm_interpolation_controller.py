@@ -485,7 +485,8 @@ class DualarmInterpolationController(mp.Process):
                 
                 curr_tcp_rotvec_L = R.from_quat(curr_tcp_quat_L).as_rotvec()
                 curr_tcp_rotvec_R = R.from_quat(curr_tcp_quat_R).as_rotvec()
-
+                # print("[DEBUG] curr_tcp_quat_L:", curr_tcp_rotvec_L)
+                # print("[DEBUG] curr_tcp_quat_R:", curr_tcp_rotvec_R)
                 # curr_pose = np.concatenate([curr_tcp_pose_L, curr_tcp_rotvec_L, curr_tcp_pose_R, curr_tcp_rotvec_R])
 
                 # 현재 State 저장
@@ -553,7 +554,8 @@ class DualarmInterpolationController(mp.Process):
                         target_position_R = target_pose[9:12]   # 3d position, m
                         target_rotvec_L = rot6d_to_rotvec(target_pose[3:9])   # 6d rotation -> rot_vec
                         target_rotvec_R = rot6d_to_rotvec(target_pose[12:18])   # 6d rotation -> rot_vec
-                        
+                        print('[DEBUG] target_6d_L:', target_pose[3:9])
+                        print('[DEBUG] target_6d_R:', target_pose[12:18])
                         target_pose = np.concatenate([target_position_L, target_rotvec_L, target_position_R, target_rotvec_R])   
                         
 
