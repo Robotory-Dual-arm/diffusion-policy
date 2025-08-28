@@ -290,7 +290,6 @@ class DualarmRealEnv:
         dt = 1 / self.frequency
         last_timestamp = np.max([x['timestamp'][-1] for x in self.last_realsense_data.values()])
         obs_align_timestamps = last_timestamp - (np.arange(self.n_obs_steps)[::-1] * dt)
-
         # 카메라 obs 데이터 얻기
         camera_obs = dict()
         for camera_idx, value in self.last_realsense_data.items():

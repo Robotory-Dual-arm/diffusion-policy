@@ -1,7 +1,7 @@
 #!/home/vision/anaconda3/envs/robodiff/bin/python
 
 # 실행코드
-# python bae_eval_real_robot_dualarm.py --input data/outputs/push_box_unet_0818/checkpoints/epoch=0900-train_loss=0.001.ckpt --output data/results
+# python bae_eval_real_robot_dualarm.py --input data/outputs/push_box_unet_0827/checkpoints/epoch=0750-train_loss=0.001.ckpt --output data/results
 """
 Usage:
 (robodiff)$ python eval_real_robot.py -i <ckpt_path> -o <save_dir> --robot_ip <ip_of_ur5>
@@ -90,7 +90,11 @@ def main(input, output, robot_ip, match_dataset, match_episode,
 
         device = torch.device('cuda')
         policy.eval().to(device)
-
+        
+        #추가됨
+        # policy.obs_encoder.to(device)
+        # print("policy device setting")
+        
         # set inference params
         policy.num_inference_steps = 16 # DDIM inference iterations; 노이즈 제거 step 수
         policy.n_action_steps = policy.horizon - policy.n_obs_steps + 1   # 과거부터 horizon 뽑고, obs만큼 빼고, 1 더하기
@@ -138,13 +142,12 @@ def main(input, output, robot_ip, match_dataset, match_episode,
             # env.realsense.set_white_balance(white_balance=5900)
 
             print("Waiting for realsense")
-            time.sleep(2.0)
+            time.sleep(1.0)
 
             print("Warming up policy inference")
             
             # obs 받아오기
             obs = env.get_obs()
-            # print("[DEBUG] obs:", obs)
 
             with torch.no_grad():
                 policy.reset()
@@ -152,19 +155,17 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                 # 받은 obs에서 image 정규화 및 다듬기, pose 다듬기
                 obs_dict_np = get_real_obs_dict(
                     env_obs=obs, shape_meta=cfg.task.shape_meta)
-
                 # shape_meta 계층구조는 유지하면서 np --> tensor로 변환, 텐서 배치차원 추가
                 obs_dict = dict_apply(obs_dict_np, 
                     lambda x: torch.from_numpy(x).unsqueeze(0).to(device))
-
+                
                 # obs로 action 예측
                 result = policy.predict_action(obs_dict)   # {'action': ~ , 'action_pred': ~}
                 # 실제 실행할 action trajectory
-
                 action = result['action'][0].detach().to('cpu').numpy()   # [0]은 배치차원 제거, tensor --> np
                 assert action.shape[-1] == 18   # action 차원에 맞게 바꿔주기
                 del result
-
+            
             print('Ready!')
             while True:
                 
@@ -189,7 +190,6 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                         # calculate timing; 실행할 action 만큼 기다릴 시간
                         t_cycle_end = t_start + (iter_idx + steps_per_inference) * dt
 
-                        print('get_obs')
                         obs = env.get_obs()
                         obs_timestamps = obs['timestamp']
                         print(f'Obs latency {time.time() - obs_timestamps[-1]}')
@@ -206,7 +206,8 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                             # this action starts from the first obs step
                             action = result['action'][0].detach().to('cpu').numpy()   # 실행할 action[Horizon, Action_Dim]
                             print('Inference latency:', time.time() - s)
-                       
+                            print("action.shape", action.shape)
+
                         # convert policy action to env actions
                         if delta_action:   # False
                             assert len(action) == 1

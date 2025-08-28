@@ -1,19 +1,45 @@
 import numpy as np
+from scipy.spatial.transform import Rotation as R
+from diffusion_policy.model.common.rotation_transformer import RotationTransformer
 
-# 원본 -1~1 정규화된 델타 회전벡터
-rot_delta_norm = np.array([0.96183622, 0.43046194, -0.53439486])
+def rot6d_to_euler(rx6d, degrees=True):
+    """
+    6D 회전 표현을 XYZ 오일러 각으로 변환
 
-# 1) 스케일 복원: π 곱하기
-rot_delta = rot_delta_norm * np.pi
+    Parameters:
+        rx6d (array-like): shape (6,), rotation matrix의 앞 두 열을 flatten한 6D 벡터
+        degrees (bool): True면 도 단위, False면 rad 단위 출력
 
-# 2) 회전각 (rad) = 벡터 노름
-angle_rad = np.linalg.norm(rot_delta)
+    Returns:
+        (rx, ry, rz): 오일러 각
+    """
+    rx6d = np.asarray(rx6d).reshape(6)
+    r1 = rx6d[:3]
+    r2 = rx6d[3:]
+    print(np.linalg.norm(r1), np.linalg.norm(r2))
+    # 두 벡터 정규직교화 (Gram-Schmidt)
+    r1 = r1 / np.linalg.norm(r1)
+    r2 = r2 - np.dot(r1, r2) * r1
+    print(r2)
+    r2 = r2 / np.linalg.norm(r2)
+    print(r2)
+    r3 = np.cross(r1, r2)
+    
+    # 회전 행렬 구성
+    rot_mat = np.stack([r1, r2, r3], axis=1)
+    print(rot_mat)
+    # scipy Rotation 객체로 변환 후 오일러 각 반환
+    r = R.from_matrix(rot_mat)
+    return r.as_euler('xyz', degrees=degrees)
 
-# 3) 회전각 (deg)
-angle_deg = np.degrees(angle_rad)
+# 예시
+rx6d = [-2.42166683e-01,
+   8.73556077e-01, -4.23396587e-01,  1.35202734e-02, -4.30794060e-01,
+  -9.03296113e-01]  # 단위 행렬의 앞 두 열
+rx, ry, rz = rot6d_to_euler(rx6d)
+print(rx, ry, rz)
 
-# 4) 회전축 (unit vector)
-axis = rot_delta / angle_rad if angle_rad != 0 else np.array([1.,0.,0.])
 
-print(f"회전각: {angle_rad:.3f} rad  =  {angle_deg:.1f}°")
-print(f"회전축: [{axis[0]:.3f}, {axis[1]:.3f}, {axis[2]:.3f}]")
+tf = RotationTransformer(from_rep='rotation_6d', to_rep='euler_angles', to_convention='XYZ')
+a = tf.forward(np.array(rx6d))
+print(a*180/np.pi)

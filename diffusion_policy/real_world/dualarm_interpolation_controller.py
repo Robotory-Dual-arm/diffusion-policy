@@ -101,7 +101,7 @@ def servoJ(robot, current_joint, target_pose, acc_pos_limit=40.0, acc_rot_limit=
         dq[3:] *= acc_rot_limit / np.linalg.norm(dq[3:])
     
     next_joint = current_joint + dq * 0.2
-    return next_joint   # rad 이거 맞나
+    return next_joint   # rad
 
 
 class Dualarm(Node):
@@ -120,12 +120,12 @@ class Dualarm(Node):
 
         self.joint_command_publisher_L = self.create_publisher(
             JointState,
-            '/left_dsr_joint_controller/joint_state_command99999999',
+            '/left_dsr_joint_controller/joint_state_command',
             10
         )
         self.joint_command_publisher_R = self.create_publisher(
             JointState,
-            '/right_dsr_joint_controller/joint_state_command99999999',
+            '/right_dsr_joint_controller/joint_state_command',
             10
         )
 
@@ -515,6 +515,8 @@ class DualarmInterpolationController(mp.Process):
                     n_cmd = 0
 
                 # execute commands
+                # action 한번에 참
+
                 for i in range(n_cmd):   # 가져온 cmd 수만큼 실행
                     command = dict()
                     for key, value in commands.items():
@@ -554,8 +556,8 @@ class DualarmInterpolationController(mp.Process):
                         target_position_R = target_pose[9:12]   # 3d position, m
                         target_rotvec_L = rot6d_to_rotvec(target_pose[3:9])   # 6d rotation -> rot_vec
                         target_rotvec_R = rot6d_to_rotvec(target_pose[12:18])   # 6d rotation -> rot_vec
-                        print('[DEBUG] target_6d_L:', target_pose[3:9])
-                        print('[DEBUG] target_6d_R:', target_pose[12:18])
+                        # print('[DEBUG] target_6d_L:', target_pose[3:9])
+                        # print('[DEBUG] target_6d_R:', target_pose[12:18])
                         target_pose = np.concatenate([target_position_L, target_rotvec_L, target_position_R, target_rotvec_R])   
                         
 
@@ -577,7 +579,7 @@ class DualarmInterpolationController(mp.Process):
                     else:
                         keep_running = False
                         break
-                
+                                
                 # regulate frequency
                 t_elapsed = time.monotonic() - t_start
                 sleep_time = dt - t_elapsed
