@@ -5,7 +5,8 @@ from rclpy.executors import SingleThreadedExecutor
 
 from spatialmath import SE3
 import spatialmath.base as smb
-from std_msgs.msg import Int32, Float64, String
+from std_msgs.msg import Int32, Float64, String, Float64MultiArray
+from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import JointState
 
 import roboticstoolbox as rtb
@@ -73,7 +74,7 @@ def servoJ(robot, current_joint, target_pose, acc_pos_limit=40.0, acc_rot_limit=
     pos     = np.array(target_pose[:3])   # m
     rot_vec = np.array(target_pose[3:])   # rad         
     rotm    = R.from_rotvec(rot_vec).as_matrix()   
-   
+    
     T = np.eye(4)
     T[:3, :3] = rotm
     T[:3,  3] = pos
@@ -100,7 +101,7 @@ def servoJ(robot, current_joint, target_pose, acc_pos_limit=40.0, acc_rot_limit=
     if np.linalg.norm(dq[3:]) > acc_rot_limit:
         dq[3:] *= acc_rot_limit / np.linalg.norm(dq[3:])
     
-    next_joint = current_joint + dq * 0.2
+    next_joint = current_joint + dq * 0.5
     return next_joint   # rad
 
 
@@ -128,6 +129,12 @@ class Dualarm(Node):
             '/right_dsr_joint_controller/joint_state_command',
             10
         )
+        # trajectory 확인용
+        self.tcp_publisher_L = self.create_publisher(
+            PoseStamped,
+            '/TCP_target_pose_L',
+            10
+        )
 
     def joint_callback(self, msg):
         global latest_joint_L, latest_joint_R
@@ -151,6 +158,16 @@ class Dualarm(Node):
         joint_position = [float(x) for x in joint_position]
         msg.position = joint_position
         self.joint_command_publisher_R.publish(msg)
+
+    # trajectory 확인용
+    def tcp_pose_publish_L(self, tcp_pose):
+        msg = PoseStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.pose.position.x = float(tcp_pose[0])
+        msg.pose.position.y = float(tcp_pose[1])
+        msg.pose.position.z = float(tcp_pose[2])
+        
+        self.tcp_publisher_L.publish(msg)
 
 class Command(enum.Enum):
     STOP = 0
@@ -434,6 +451,9 @@ class DualarmInterpolationController(mp.Process):
 
             t_start = time.monotonic()   # 수동 제어 주기 맞추기
 
+            # trajectory 확인용
+            cmd_index = 0
+
             while keep_running:   # 루프 시작
                 rclpy.spin_once(node)
                 # start control iteration
@@ -463,6 +483,9 @@ class DualarmInterpolationController(mp.Process):
                 # print("[DEBUG] target_joint:",target_joint_L*180/np.pi, target_joint_R*180/np.pi)
                 node.joint_command_publish_L(target_joint_L)
                 node.joint_command_publish_R(target_joint_R)
+
+                # trajectory 확인용
+                # node.tcp_pose_publish_L(target_pose_L)
 
                 # current state
                 curr_joint_L = latest_joint_L
@@ -508,15 +531,21 @@ class DualarmInterpolationController(mp.Process):
 
 
                 # fetch command from queue
+                
                 try:
                     commands = self.input_queue.get_all()   # command 긁어옴
                     n_cmd = len(commands['cmd'])
+                    print("[DEBUG] received n_cmd:", n_cmd)
+                    
+                    # print("[TIME] n_cmd time:", time.monotonic())
+                    
+                    
                 except Empty:
                     n_cmd = 0
 
                 # execute commands
                 # action 한번에 참
-
+                
                 for i in range(n_cmd):   # 가져온 cmd 수만큼 실행
                     command = dict()
                     for key, value in commands.items():
@@ -559,7 +588,12 @@ class DualarmInterpolationController(mp.Process):
                         # print('[DEBUG] target_6d_L:', target_pose[3:9])
                         # print('[DEBUG] target_6d_R:', target_pose[12:18])
                         target_pose = np.concatenate([target_position_L, target_rotvec_L, target_position_R, target_rotvec_R])   
-                        
+
+                        if cmd_index < 6:
+                            node.tcp_pose_publish_L(target_position_L)
+                        cmd_index += 1
+                        if cmd_index == 14:
+                            cmd_index = 0
 
                         # print('[DEBUG] target_pose', target_pose)
                         

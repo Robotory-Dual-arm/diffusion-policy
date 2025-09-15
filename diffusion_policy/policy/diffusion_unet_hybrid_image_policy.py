@@ -225,6 +225,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         assert 'past_action' not in obs_dict # not implemented yet
         # normalize input
         nobs = self.normalizer.normalize(obs_dict)
+        # print('nobs.size:', {k: v.size() for k, v in nobs.items()})
         value = next(iter(nobs.values()))
         B, To = value.shape[:2]
         T = self.horizon    # 예측할 step수
@@ -242,6 +243,8 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         if self.obs_as_global_cond:
             # condition through global feature
             this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:]))
+            # print('this_nobs.size:', {k: v.size() for k, v in this_nobs.items()})
+
             nobs_features = self.obs_encoder(this_nobs)
             # reshape back to B, Do
             global_cond = nobs_features.reshape(B, -1)

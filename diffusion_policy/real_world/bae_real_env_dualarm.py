@@ -362,6 +362,7 @@ class DualarmRealEnv:
         # convert action to pose
         receive_time = time.time()
         is_new = timestamps > receive_time
+        # print("[DEBUG] is_new2: ", is_new)
         new_actions = actions[is_new]
         new_timestamps = timestamps[is_new]
         new_stages = stages[is_new]
