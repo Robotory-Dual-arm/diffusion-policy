@@ -165,7 +165,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                 action = result['action'][0].detach().to('cpu').numpy()   # [0]은 배치차원 제거, tensor --> np
                 assert action.shape[-1] == 18   # action 차원에 맞게 바꿔주기
                 del result
-            
+            np.set_printoptions(suppress=True, floatmode="fixed", precision=11)
             print('Ready!')
             while True:
                 
@@ -176,6 +176,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                     start_delay = 1.0
                     eval_t_start = time.time() + start_delay   # 시스템시간, 영상 로그용
                     t_start = time.monotonic() + start_delay   # 로봇 제어 시간
+                    print("[TIME] t_start: ", t_start%100)
 
                     env.start_episode(eval_t_start)   # 영상 저장 시작
                     # wait for 1/30 sec to get the closest frame actually
@@ -188,7 +189,9 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                     perv_target_pose = None
                     while True:
                         # calculate timing; 실행할 action 만큼 기다릴 시간
+                        # print("[TIME] current time: ", time.monotonic()%100)
                         t_cycle_end = t_start + (iter_idx + steps_per_inference) * dt
+                        # print("[TIME] t_cycle_end: ", t_cycle_end%100)
 
                         obs = env.get_obs()
                         obs_timestamps = obs['timestamp']
@@ -206,7 +209,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                             # this action starts from the first obs step
                             action = result['action'][0].detach().to('cpu').numpy()   # 실행할 action[Horizon, Action_Dim]
                             print('Inference latency:', time.time() - s)
-                            print("action.shape", action.shape)
+                            # print("action.shape", action.shape)
 
                         # convert policy action to env actions
                         if delta_action:   # False
@@ -231,6 +234,8 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                         action_exec_latency = 0.01
                         curr_time = time.time()
                         is_new = action_timestamps > (curr_time + action_exec_latency)   # 현재시점 이후 action만 실행
+                        # print("[DEBUG] action_timestamps: ", np.array(action_timestamps)%10)
+                        print("[DEBUG] is_new: ", is_new)
                         
                         if np.sum(is_new) == 0:   # 전부 지나버림
                             # exceeded time budget, still do something
@@ -242,23 +247,20 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                             action_timestamps = np.array([action_timestamp])
 
                         else:   # is_new = 1 인것만 실행
-                            this_target_poses = this_target_poses[is_new]
-                            action_timestamps = action_timestamps[is_new]
+                            this_target_poses = this_target_poses[is_new]#[:6]
+                            action_timestamps = action_timestamps[is_new]#[:6]
 
-                        # clip actions; 범위 바꿈
-                        # this_target_poses[:,:2] = np.clip(
-                        #     this_target_poses[:,:2], [0.25, -0.45], [0.77, 0.40])
-                        # delta action이라 clip 안함!!!!!!!!!!!!!!!!!!!!!!!!!!
-                        # this_target_poses[:,:3] = np.clip(
-                        #     this_target_poses[:,:3], [-0.50, -0.90, 0.095], [0.40, -0.37, 0.81])
                         
                         # execute actions; 실제 action 실행부분; 
+                        # print("[TIME] exec_actions 발사 시간: ", time.monotonic()%100, time.time()%10)
                         env.exec_actions(
                             actions=this_target_poses,
                             timestamps=action_timestamps
                         )
                         print(f"Submitted {len(this_target_poses)} steps of actions.")
-                        print("[DEBUG]: target pose", this_target_poses)
+                        # print("[TIME] exec_actions time:", time.monotonic())
+                        # print("[TIME] action_timestamps:", action_timestamps)
+                        # print("[DEBUG]: target pose", this_target_poses)
 
 
                         # 's' 누르면 종료
@@ -285,6 +287,8 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                         # wait for execution; 로봇이 action 여러개 실행할동안 기다림
                         precise_wait(t_cycle_end - frame_latency)
                         iter_idx += steps_per_inference
+                        # print("[TIME] cycle 끝 시간: ", time.monotonic()%100, time.time()%10)
+                        # time.sleep(1)
 
                 except KeyboardInterrupt:
                     print("Interrupted!")
