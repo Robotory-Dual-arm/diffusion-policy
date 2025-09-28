@@ -1,27 +1,37 @@
-name: bae_can_in_box
+name: bae_dualarm_doll_in_box
 
-image_shape: [3, 84, 84]
-dataset_path: data/baetae/bae_can_in_box_image.hdf5
+image_shape: [3, 240, 320]
+dataset_path: data/baetae/250928/diffusion_doll_in_box_0928.hdf5
 
 shape_meta: &shape_meta
   obs:
-    image0:
-      shape: [3, 84, 84]
+    image0:   # Head camera 242422304502
+      shape: [3, 240, 320]
       type: rgb
-    image1:
-      shape: [3, 84, 84]
+    image1:   # Front camera 336222070518
+      shape: [3, 240, 320]
       type: rgb
-    robot_eef_pos:
+    robot_pose_L:
       shape: [3]
       type: low_dim
-    robot_eef_quat:
+    robot_quat_L:
       shape: [4]
       type: low_dim
-    robot_gripper_qpos:
-      shape: [1]
+    robot_pose_R:
+      shape: [3]
       type: low_dim
+    robot_quat_R:
+      shape: [4]
+      type: low_dim
+    hand_pose_L:
+      shape: [7]
+      type: low_dim
+    hand_pose_R:
+      shape: [7]
+      type: low_dim
+    
   action: 
-    shape: [7]
+    shape: [32] # robot_pose_L[3] + robot_rot6d_L[6] + robot_pose_R[3] + robot_rot6d_R[6] + hand_pose_L[7] + hand_pose_R[7]
 
 env_runner:
   _target_: diffusion_policy.env_runner.real_pusht_image_runner.RealPushTImageRunner
@@ -41,4 +51,4 @@ dataset:
   val_ratio: 0.00
   # max_train_episodes: null
   # delta_action: False
-
+  abs_action: True

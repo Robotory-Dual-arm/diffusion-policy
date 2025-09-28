@@ -1,7 +1,7 @@
 name: bae_dualarm_box_image_abs
 
 image_shape: [3, 240, 320]
-dataset_path: data/baetae/250912/diffusion_push_box_0912.hdf5
+dataset_path: &dataset_path data/baetae/250912/diffusion_push_box_0912.hdf5
 
 shape_meta: &shape_meta
   obs:
@@ -35,17 +35,15 @@ env_runner:
 dataset:
   _target_: diffusion_policy.dataset.robomimic_replay_image_dataset.RobomimicReplayImageDataset
   shape_meta: *shape_meta
-  dataset_path: ${task.dataset_path}
+  dataset_path: *dataset_path
   horizon: ${horizon}
-  # pad_before: ${eval:'${n_obs_steps}-1+${n_latency_steps}'}
-  pad_before: ${eval:'${n_obs_steps}-1'}
+  pad_before: ${eval:'${n_obs_steps}-1+${n_latency_steps}'}
   pad_after: ${eval:'${n_action_steps}-1'}
   n_obs_steps: ${dataset_obs_steps}
-  # n_latency_steps: ${n_latency_steps}
+  abs_action: True
+  rotation_rep: 'rotation_6d'
+  use_legacy_normalizer: False
   use_cache: True
   seed: 42
-  val_ratio: 0.00
-  # max_train_episodes: null
-  # delta_action: False
-  abs_action: True
+  # val_ratio: 0.02
 

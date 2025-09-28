@@ -222,24 +222,24 @@ class RobomimicReplayImageDataset(BaseImageDataset):
 
 def _convert_actions(raw_actions, abs_action, rotation_transformer):
     actions = raw_actions
-    if abs_action:
-        is_dual_arm = False
-        if raw_actions.shape[-1] == 14:
-            # dual arm
-            raw_actions = raw_actions.reshape(-1,2,7)
-            is_dual_arm = True
+    # if abs_action:
+    #     is_dual_arm = False
+    #     if raw_actions.shape[-1] == 14:
+    #         # dual arm
+    #         raw_actions = raw_actions.reshape(-1,2,7)
+    #         is_dual_arm = True
 
-        pos = raw_actions[...,:3]
-        rot = raw_actions[...,3:6]
-        gripper = raw_actions[...,6:]
-        rot = rotation_transformer.forward(rot)
-        raw_actions = np.concatenate([
-            pos, rot, gripper
-        ], axis=-1).astype(np.float32)
+    #     pos = raw_actions[...,:3]
+    #     rot = raw_actions[...,3:6]
+    #     gripper = raw_actions[...,6:]
+    #     rot = rotation_transformer.forward(rot)
+    #     raw_actions = np.concatenate([
+    #         pos, rot, gripper
+    #     ], axis=-1).astype(np.float32)
     
-        if is_dual_arm:
-            raw_actions = raw_actions.reshape(-1,20)
-        actions = raw_actions
+    #     if is_dual_arm:
+    #         raw_actions = raw_actions.reshape(-1,20)
+    #     actions = raw_actions
     return actions
 
 
