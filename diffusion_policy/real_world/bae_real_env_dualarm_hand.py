@@ -5,7 +5,7 @@ import time
 import shutil
 import math
 from multiprocessing.managers import SharedMemoryManager
-from diffusion_policy.real_world.dualarm_interpolation_controller import DualarmInterpolationController
+from diffusion_policy.real_world.dualarm_hand_interpolation_controller import DualarmInterpolationController # 듀얼암 + 핸드
 from diffusion_policy.real_world.multi_realsense import MultiRealsense, SingleRealsense
 from diffusion_policy.real_world.video_recorder import VideoRecorder
 from diffusion_policy.common.timestamp_accumulator import (
@@ -34,6 +34,8 @@ DEFAULT_OBS_KEY_MAP = {
     'robot_pose_R': 'robot_pose_R',
     'robot_quat_L': 'robot_quat_L',
     'robot_quat_R': 'robot_quat_R',
+    'hand_pose_L': 'hand_pose_L',
+    'hand_pose_R': 'hand_pose_R',
 
     # timestamps
     'step_idx': 'step_idx',

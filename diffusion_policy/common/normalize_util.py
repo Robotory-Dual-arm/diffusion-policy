@@ -158,15 +158,7 @@ def robomimic_abs_action_only_normalizer_from_stat(stat):
 
 
 def robomimic_abs_action_only_dual_arm_normalizer_from_stat(stat):
-    Da = stat['max'].shape[-1]
-    Dah = Da // 2
-    result = dict_apply_split(
-        stat, lambda x: {
-            'pos0': x[...,:3],
-            'other0': x[...,3:Dah],
-            'pos1': x[...,Dah:Dah+3],
-            'other1': x[...,Dah+3:]
-    })
+    
 
     def get_pos_param_info(stat, output_max=1, output_min=-1, range_eps=1e-7):
         # -1, 1 normalization
@@ -194,17 +186,56 @@ def robomimic_abs_action_only_dual_arm_normalizer_from_stat(stat):
         }
         return {'scale': scale, 'offset': offset}, info
 
-    pos0_param, pos0_info = get_pos_param_info(result['pos0'])
-    pos1_param, pos1_info = get_pos_param_info(result['pos1'])
-    other0_param, other0_info = get_other_param_info(result['other0'])
-    other1_param, other1_info = get_other_param_info(result['other1'])
+    Da = stat['max'].shape[-1]
 
-    param = dict_apply_reduce(
-        [pos0_param, other0_param, pos1_param, other1_param], 
-        lambda x: np.concatenate(x,axis=-1))
-    info = dict_apply_reduce(
-        [pos0_info, other0_info, pos1_info, other1_info], 
-        lambda x: np.concatenate(x,axis=-1))
+    if Da == 32:
+        # robot_pose_L(3) + robot_6d_rot_L(6) + robot_pose_R(3) + robot_6d_rot_R(6) + hand_pose_L(7) +hand_pose_R(7)
+        result = dict_apply_split(
+            stat, lambda x: {
+                'pos0': x[..., :3],
+                'other0': x[..., 3:9],
+                'pos1': x[..., 9:12],
+                'other1': x[..., 12:18],
+                'hand_pos0': x[..., 18:25],
+                'hand_pos1': x[..., 25:32]
+            })
+        
+        pos0_param, pos0_info = get_pos_param_info(result['pos0'])
+        pos1_param, pos1_info = get_pos_param_info(result['pos1'])
+        other0_param, other0_info = get_other_param_info(result['other0'])
+        other1_param, other1_info = get_other_param_info(result['other1'])
+        hand_pos0_param, hand_pos0_info = get_pos_param_info(result['hand_pos0'])
+        hand_pos1_param, hand_pos1_info = get_pos_param_info(result['hand_pos1'])
+
+        param = dict_apply_reduce(
+            [pos0_param, other0_param, pos1_param, other1_param, hand_pos0_param, hand_pos1_param], 
+            lambda x: np.concatenate(x,axis=-1))
+        info = dict_apply_reduce(
+            [pos0_info, other0_info, pos1_info, other1_info, hand_pos0_info, hand_pos1_info], 
+            lambda x: np.concatenate(x,axis=-1))
+        
+    else:    
+        Dah = Da // 2
+        result = dict_apply_split(
+            stat, lambda x: {
+                'pos0': x[...,:3],
+                'other0': x[...,3:Dah],
+                'pos1': x[...,Dah:Dah+3],
+                'other1': x[...,Dah+3:]
+        })
+
+        pos0_param, pos0_info = get_pos_param_info(result['pos0'])
+        pos1_param, pos1_info = get_pos_param_info(result['pos1'])
+        other0_param, other0_info = get_other_param_info(result['other0'])
+        other1_param, other1_info = get_other_param_info(result['other1'])
+
+        param = dict_apply_reduce(
+            [pos0_param, other0_param, pos1_param, other1_param], 
+            lambda x: np.concatenate(x,axis=-1))
+        info = dict_apply_reduce(
+            [pos0_info, other0_info, pos1_info, other1_info], 
+            lambda x: np.concatenate(x,axis=-1))
+
 
     return SingleFieldLinearNormalizer.create_manual(
         scale=param['scale'],

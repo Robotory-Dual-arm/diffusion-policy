@@ -74,7 +74,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             task_name='square',
             dataset_type='ph')
         
-        # robomimic config를 수정 가능하게 함 (unlock)
+        # 이미지 랜덤 crop 설정
         with config.unlocked():
             # set config with shape_meta
             config.observation.modalities.obs = obs_config
@@ -102,9 +102,10 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
                 ac_dim=action_dim,
                 device='cpu',
             )
-
+        # robomimic bc-rnn의 obs encoder 사용
         obs_encoder = policy.nets['policy'].nets['encoder'].nets['obs']
         
+        # BatchNorm -> GroupNorm
         if obs_encoder_group_norm:
             # replace batch norm with group norm
             replace_submodules(
@@ -116,6 +117,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             )
             # obs_encoder.obs_nets['agentview_image'].nets[0].nets
         
+        # inference시 고정 crop
         # obs_encoder.obs_randomizers['agentview_image']
         if eval_fixed_crop:
             replace_submodules(
@@ -130,6 +132,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
                 )
             )
 
+        # Diffusion Model 시작 ==================================================
         # create diffusion model
         obs_feature_dim = obs_encoder.output_shape()[0]
         input_dim = action_dim + obs_feature_dim
@@ -184,7 +187,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             # keyword arguments to scheduler.step
             **kwargs
             ):
-        model = self.model
+        model = self.model   # Unet
         scheduler = self.noise_scheduler
 
         trajectory = torch.randn(
@@ -197,10 +200,10 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         scheduler.set_timesteps(self.num_inference_steps)
 
         for t in scheduler.timesteps:
-            # 1. apply conditioning
+            # 1. apply conditioning; obs_as_global_cond=False일때 condition data 설정
             trajectory[condition_mask] = condition_data[condition_mask]
 
-            # 2. predict model output
+            # 2. predict model output; noise 예측(traj랑 같은 dim)
             model_output = model(trajectory, t, 
                 local_cond=local_cond, global_cond=global_cond)
 
@@ -240,7 +243,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         # handle different ways of passing observation
         local_cond = None
         global_cond = None
-        if self.obs_as_global_cond:
+        if self.obs_as_global_cond:   # True
             # condition through global feature
             this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:]))
             # print('this_nobs.size:', {k: v.size() for k, v in this_nobs.items()})
@@ -302,10 +305,9 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         global_cond = None
         trajectory = nactions
         cond_data = trajectory
-        if self.obs_as_global_cond:
+        if self.obs_as_global_cond:   # True
             # reshape B, T, ... to B*T
-            this_nobs = dict_apply(nobs, 
-                lambda x: x[:,:self.n_obs_steps,...].reshape(-1,*x.shape[2:]))
+            this_nobs = dict_apply(nobs, lambda x: x[:,:self.n_obs_steps,...].reshape(-1,*x.shape[2:]))
             nobs_features = self.obs_encoder(this_nobs)
             # reshape back to B, Do
             global_cond = nobs_features.reshape(batch_size, -1)

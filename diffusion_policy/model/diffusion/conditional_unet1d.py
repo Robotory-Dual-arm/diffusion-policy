@@ -68,7 +68,7 @@ class ConditionalResidualBlock1D(nn.Module):
 # conditional U-Net -> FiLM
 class ConditionalUnet1D(nn.Module):
     def __init__(self, 
-        input_dim,   # action + obs 의 dimension
+        input_dim,   # action + obs feature 의 dimension
         local_cond_dim=None,
         global_cond_dim=None,
         diffusion_step_embed_dim=256,
@@ -81,6 +81,7 @@ class ConditionalUnet1D(nn.Module):
         all_dims = [input_dim] + list(down_dims)
         start_dim = down_dims[0]
 
+        # diffusion step 임베딩
         dsed = diffusion_step_embed_dim
         diffusion_step_encoder = nn.Sequential(
             SinusoidalPosEmb(dsed),
@@ -89,13 +90,14 @@ class ConditionalUnet1D(nn.Module):
             nn.Linear(dsed * 4, dsed),
         )
         cond_dim = dsed
+        # condition dim = diffusion step dim + obs feature dim
         if global_cond_dim is not None:
             cond_dim += global_cond_dim
-
+        # [(in, 256), (256, 512), (512, 1024)]
         in_out = list(zip(all_dims[:-1], all_dims[1:]))
 
         local_cond_encoder = None
-        if local_cond_dim is not None:
+        if local_cond_dim is not None:   # False
             _, dim_out = in_out[0]
             dim_in = local_cond_dim
             local_cond_encoder = nn.ModuleList([
@@ -110,10 +112,10 @@ class ConditionalUnet1D(nn.Module):
                     kernel_size=kernel_size, n_groups=n_groups,
                     cond_predict_scale=cond_predict_scale)
             ])
-
+        # (1024, 1024)
         mid_dim = all_dims[-1]
         self.mid_modules = nn.ModuleList([
-            ConditionalResidualBlock1D(
+            ConditionalResidualBlock1D(   
                 mid_dim, mid_dim, cond_dim=cond_dim,
                 kernel_size=kernel_size, n_groups=n_groups,
                 cond_predict_scale=cond_predict_scale
@@ -124,7 +126,7 @@ class ConditionalUnet1D(nn.Module):
                 cond_predict_scale=cond_predict_scale
             ),
         ])
-
+        # (in, 256) (256, 512) (512, 1024)
         down_modules = nn.ModuleList([])
         for ind, (dim_in, dim_out) in enumerate(in_out):
             is_last = ind >= (len(in_out) - 1)
@@ -139,7 +141,7 @@ class ConditionalUnet1D(nn.Module):
                     cond_predict_scale=cond_predict_scale),
                 Downsample1d(dim_out) if not is_last else nn.Identity()
             ]))
-
+        # (2048, 512) (1024, 256) skipped connection 때문에 dim_out*2
         up_modules = nn.ModuleList([])
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out[1:])):
             is_last = ind >= (len(in_out) - 1)
@@ -154,7 +156,7 @@ class ConditionalUnet1D(nn.Module):
                     cond_predict_scale=cond_predict_scale),
                 Upsample1d(dim_in) if not is_last else nn.Identity()
             ]))
-        
+        # (256, 256) (256, in)
         final_conv = nn.Sequential(
             Conv1dBlock(start_dim, start_dim, kernel_size=kernel_size),
             nn.Conv1d(start_dim, input_dim, 1),
