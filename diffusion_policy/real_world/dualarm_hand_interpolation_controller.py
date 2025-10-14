@@ -101,7 +101,7 @@ def servoJ(robot, current_joint, target_pose, acc_pos_limit=40.0, acc_rot_limit=
     if np.linalg.norm(dq[3:]) > acc_rot_limit:
         dq[3:] *= acc_rot_limit / np.linalg.norm(dq[3:])
     
-    next_joint = current_joint + dq * 0.5
+    next_joint = current_joint + dq * 0.2
     return next_joint   # rad
 
 
@@ -127,17 +127,17 @@ class Dualarm(Node):
 
         self.joint_command_publisher_L = self.create_publisher(
             JointState,
-            '/left_dsr_joint_controller/joint_state_command',
+            '/left_dsr_joint_controller/joint_state_command9999',
             10
         )
         self.joint_command_publisher_R = self.create_publisher(
             JointState,
-            '/right_dsr_joint_controller/joint_state_command',
+            '/right_dsr_joint_controller/joint_state_command9999',
             10
         )
         self.hand_command_publisher = self.create_publisher(
             JointState,
-            '/?????????????????????????????????',
+            '/aidin_dualarm_joint_controller/joint_state_command',
             10
         )
         # trajectory 확인용
