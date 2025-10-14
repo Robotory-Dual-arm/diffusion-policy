@@ -78,7 +78,7 @@ def servoJ(robot, current_joint, target_pose, acc_pos_limit=40.0, acc_rot_limit=
     T = np.eye(4)
     T[:3, :3] = rotm
     T[:3,  3] = pos
-    target_pose = SE3(T)                   
+    target_pose = SE3(T)    
     
     current_pose_rotvec = R.from_matrix(current_pose.R).as_rotvec()
 

@@ -1,7 +1,7 @@
 #!/home/vision/anaconda3/envs/robodiff/bin/python
 
 # 실행코드
-# python bae_eval_real_robot_dualarm.py --input data/outputs/push_box_unet_0827/checkpoints/epoch=0750-train_loss=0.001.ckpt --output data/results
+# python bae_eval_real_robot_dualarm_hand.py --input data/outputs/doll_in_box_251014/checkpoints/epoch=1150-train_loss=0.001.ckpt --output data/results
 """
 Usage:
 (robodiff)$ python eval_real_robot.py -i <ckpt_path> -o <save_dir> --robot_ip <ip_of_ur5>

@@ -27,11 +27,18 @@ class PoseTrajectoryInterpolator:   # poses = [ [x,y,z,rx,ry,rz, x,y,z,rx,ry,rz,
         if not isinstance(poses, np.ndarray):
             poses = np.array(poses)
 
+        
         if len(times) == 1:
             # special treatment for single step interpolation
             self.single_step = True
             self._times = times
             self._poses = poses
+
+            if len(poses[0]) == 26:
+                self.dualarm_hand = True
+            else:
+                self.dualarm_hand = False
+
         else:
             self.single_step = False
             assert np.all(times[1:] >= times[:-1])
@@ -48,6 +55,7 @@ class PoseTrajectoryInterpolator:   # poses = [ [x,y,z,rx,ry,rz, x,y,z,rx,ry,rz,
                 axis=0, assume_sorted=True)
             self.rot_interp_R = st.Slerp(times, rot_R)
 
+            
             if len(poses[0]) == 26:
                 # dualarm + hand
                 self.dualarm_hand = True
@@ -59,6 +67,8 @@ class PoseTrajectoryInterpolator:   # poses = [ [x,y,z,rx,ry,rz, x,y,z,rx,ry,rz,
                     axis=0, assume_sorted=True)
                 self.hand_interp_R = si.interp1d(times, hand_R,
                     axis=0, assume_sorted=True)
+            else:
+                self.dualarm_hand = False
             
 
     @property   # self.times
