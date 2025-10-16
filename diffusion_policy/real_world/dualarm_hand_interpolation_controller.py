@@ -101,7 +101,7 @@ def servoJ(robot, current_joint, target_pose, acc_pos_limit=40.0, acc_rot_limit=
     if np.linalg.norm(dq[3:]) > acc_rot_limit:
         dq[3:] *= acc_rot_limit / np.linalg.norm(dq[3:])
     
-    next_joint = current_joint + dq * 0.2
+    next_joint = current_joint + dq * 0.6
     return next_joint   # rad
 
 
@@ -112,12 +112,22 @@ class Dualarm(Node):
         self.joint_name = [f"left_joint_{i}" for i in range(1,7)] + \
                             [f"right_joint_{i}" for i in range(1,7)]
         self.hand_name = ['left_thumb_joint1', 'left_thumb_joint2', 'left_thumb_joint3',
-                          'left_index_joint1', 'left_index_joint2',
-                          'left_middle_joint1', 'left_middle_joint2',
+                          'left_index_joint2', 'left_index_joint3',
+                          'left_middle_joint2', 'left_middle_joint3',
                           'right_thumb_joint1', 'right_thumb_joint2', 'right_thumb_joint3',
-                          'right_index_joint1', 'right_index_joint2',
-                          'right_middle_joint1', 'right_middle_joint2']
-        
+                          'right_index_joint2', 'right_index_joint3',
+                          'right_middle_joint2', 'right_middle_joint3']
+        # self.hand_name = ['left_thumb_joint1', 'left_thumb_joint2', 'left_thumb_joint3',
+        #                   'left_index_joint1', 'left_index_joint2', 'left_index_joint3',
+        #                   'left_middle_joint1', 'left_middle_joint2', 'left_middle_joint3',
+        #                   'left_ring_joint1', 'left_ring_joint2', 'left_ring_joint3',
+        #                   'left_pinky_joint1', 'left_pinky_joint2', 'left_pinky_joint3',
+        #                   'right_thumb_joint1', 'right_thumb_joint2', 'right_thumb_joint3',
+        #                   'right_index_joint1', 'right_index_joint2', 'right_index_joint3',
+        #                   'right_middle_joint1', 'right_middle_joint2', 'right_middle_joint3',
+        #                   'right_ring_joint1', 'right_ring_joint2', 'right_ring_joint3',
+        #                   'right_pinky_joint1', 'right_pinky_joint2', 'right_pinky_joint3']
+
         self.joint_subscriber = self.create_subscription(
             JointState,
             '/joint_states',
@@ -127,12 +137,12 @@ class Dualarm(Node):
 
         self.joint_command_publisher_L = self.create_publisher(
             JointState,
-            '/left_dsr_joint_controller/joint_state_command9999',
+            '/left_dsr_joint_controller/joint_state_command',
             10
         )
         self.joint_command_publisher_R = self.create_publisher(
             JointState,
-            '/right_dsr_joint_controller/joint_state_command9999',
+            '/right_dsr_joint_controller/joint_state_command',
             10
         )
         self.hand_command_publisher = self.create_publisher(
@@ -177,6 +187,7 @@ class Dualarm(Node):
     def hand_command_publish(self, hand_position):
         assert len(hand_position) == 14    # 7*2
         msg = JointState()
+        # hand_position = [float(0) for _ in range(30)]
         msg.name = self.hand_name
         hand_position = [float(x) for x in hand_position]
         msg.position = hand_position
@@ -456,7 +467,7 @@ class DualarmInterpolationController(mp.Process):
             curr_tcp_rotvec_R = R.from_quat(curr_tcp_quat_R).as_rotvec()
 
             curr_pose = np.concatenate([curr_tcp_pose_L, curr_tcp_rotvec_L, curr_tcp_pose_R, curr_tcp_rotvec_R, curr_hand_L, curr_hand_R])
-
+            print("[DEBUG] curr_pose:", curr_pose)
             # use monotonic time to make sure the control loop never go backward
             curr_t = time.monotonic()
             last_waypoint_time = curr_t
@@ -481,6 +492,7 @@ class DualarmInterpolationController(mp.Process):
                 # diff = t_now - pose_interp.times[-1]
                 # if diff > 0:
                 #     print('extrapolate', diff)
+                
                 pose_command = pose_interp(t_now)   # 보간 해놓고 현재 시간의 목표 pose 가져옴
             
                 # 두산 로봇 제어                
@@ -607,7 +619,7 @@ class DualarmInterpolationController(mp.Process):
                     # 이걸로 제어 (n_cmd 1개씩 제어)
                     elif cmd == Command.SCHEDULE_WAYPOINT.value:
                         target_pose = command['target_pose']   # abs; (pose_L, rot6d_L, pose_R, rot6d_R)
-
+                        print('[DEBUG] target_pose:', target_pose[:18])
                         target_position_L = target_pose[:3]   # 3d position, m
                         target_position_R = target_pose[9:12]   # 3d position, m
                         target_rotvec_L = rot6d_to_rotvec(target_pose[3:9])   # 6d rotation -> rot_vec
