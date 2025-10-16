@@ -249,13 +249,17 @@ class PoseTrajectoryInterpolator:   # poses = [ [x,y,z,rx,ry,rz, x,y,z,rx,ry,rz,
             # pose = np.zeros((len(t), 6))
             # pose[:,:3] = self.pos_interp(t)
             # pose[:,3:] = self.rot_interp(t).as_rotvec()
-            pose = np.zeros((len(t), 12))
+            
             pose[:,:3] = self.pos_interp_L(t)
             pose[:,3:6] = self.rot_interp_L(t).as_rotvec()
             pose[:,6:9] = self.pos_interp_R(t)
             pose[:,9:12] = self.rot_interp_R(t).as_rotvec()
-
+            # print("[DEBUG] len(t):", len(t))
+            # print("[DEBUG] self.pos_interp_L(t):", self.pos_interp_L(t))
+            # print('[DEBUG] pose[:,:3]:', pose[:,:3])
             if self.dualarm_hand:
+                # print("[DEBUG] self.hand_interp_L(t):", self.hand_interp_L(t))
+                # print('[DEBUG] pose[:,12:19]:', pose[:,12:19])
                 pose[:,12:19] = self.hand_interp_L(t)
                 pose[:,19:26] = self.hand_interp_R(t)
 
