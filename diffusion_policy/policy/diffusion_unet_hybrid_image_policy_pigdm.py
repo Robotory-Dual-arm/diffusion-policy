@@ -191,6 +191,7 @@ class DiffusionUnetHybridImagePIGDMPolicy(BaseImagePolicy):
         model = self.model   # Unet
         scheduler = self.noise_scheduler
 
+        # 여기다가 requires_grad=True 설정하면 될거같은데??
         trajectory = torch.randn(
             size=condition_data.shape, 
             dtype=condition_data.dtype,
