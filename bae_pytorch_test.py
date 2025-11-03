@@ -1,26 +1,39 @@
 import torch
 
-x = torch.tensor([[1., 2., 3.], [4., 5., 6.], [7., 8., 9.]], requires_grad=True)
+torch.set_printoptions(precision=4, sci_mode=False)
 
-print(x)
+class Model():
+    def __init__(self):
+        super().__init__() 
+        
+    def forward(self, x):
+        return x**2 
 
-x_pred = x**2 
+# random action     0 - 10
+a = torch.rand(3,3) * 10
+a = a.requires_grad_(True)
+print('noise action', a)
 
-print(x_pred)
-print(x_pred.grad_fn)
+y = torch.tensor([[1., 2., 3.], [4., 5., 6.], [0., 0., 0.]])
+
+model = Model()
+output = model.forward(a)
+
+e = y - output
 
 
-y = torch.tensor([[5., 5., 5.], [5., 5., 5.], [0., 0., 0.]])
-e = y - x_pred
+
+for i in range(100):
+    vjp, = torch.autograd.grad(outputs=output,
+                            inputs=a,
+                            grad_outputs=e,
+                            retain_graph=True,
+                            create_graph=False)
+    
+    a = a + 0.01 * vjp
+    output = model.forward(a)
+    print(i)
+    print(output)
+    e = y - output
 
 
-vjp, = torch.autograd.grad(outputs=x_pred,
-                           inputs=x,
-                           grad_outputs=e,
-                           retain_graph=True,
-                           create_graph=False)
-print(vjp)
-
-final = x - 0.1 * vjp
-final = final**2
-print(final)
