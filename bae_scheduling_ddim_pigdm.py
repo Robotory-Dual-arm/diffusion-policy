@@ -214,6 +214,7 @@ class DDIMPIGDMScheduler(SchedulerMixin, ConfigMixin):
         model_output: torch.FloatTensor,
         timestep: int,
         sample: torch.FloatTensor,   # 현재 denoising step의 trajectory
+        prev_action: torch.FloatTensor,   # 이전 action 전체
         eta: float = 0.0,
         use_clipped_model_output: bool = False,
         generator=None,
@@ -308,15 +309,25 @@ class DDIMPIGDMScheduler(SchedulerMixin, ConfigMixin):
 
 
         ##### 8. Pi GDM: add guidance
+        if self.prev_action is not None:
+            
         # y = 조건 (이전 action 가져와야됨)
-        # w = 조건 가중치 (from RTC) 
+        
+        # w = 조건 가중치 (from RTC) (이전꺼에서 남는 action 10개 라고 가정)
+        w = [1., 9/10, 8/10, 7/10, 6/10, 5/10, 4/10, 3/10, 2/10, 1/10, 0., 0., 0., 0., 0., 0.]
+        w = w * torch.expm1(w) / (math.e - 1.0)
+
         # grad = 예측한 x_t 에 대해 x_t로 미분한 값 (grad 잘 살려서 가져오기)
-        error = (y-x_hat_t) * w
+        error = (y - pred_original_sample) * w[:, None]
 
-        vjp = torch.autograd.grad(outputs=prev_sample,
-                                  inputs=sample,)
+        vjp = torch.autograd.grad(outputs=pred_original_sample,
+                                  inputs=sample,
+                                  grad_outputs=error,
+                                  retain_graph=True,
+                                  create_graph=False)
 
-        guidance = error * grad(pred_original_sample 을 x_t로 미분)
+
+        guidance = 계수 * vjp
         
         prev_sample = prev_sample + (alpha_prod_t ** (0.5)) * guidance
 

@@ -173,6 +173,8 @@ class DiffusionUnetHybridImagePIGDMPolicy(BaseImagePolicy):
         self.obs_as_global_cond = obs_as_global_cond
         self.kwargs = kwargs
 
+        self.prev_action = None
+
         if num_inference_steps is None:
             num_inference_steps = noise_scheduler.config.num_train_timesteps
         self.num_inference_steps = num_inference_steps
@@ -212,12 +214,15 @@ class DiffusionUnetHybridImagePIGDMPolicy(BaseImagePolicy):
             # 3. compute previous image: x_t -> x_t-1
             trajectory = scheduler.step(
                 model_output, t, trajectory, 
-                generator=generator,
+                generator=generator, 
+                prev_action=self.prev_action,
                 **kwargs
                 ).prev_sample
         
         # finally make sure conditioning is enforced
         trajectory[condition_mask] = condition_data[condition_mask]        
+
+        self.prev_action = trajectory.clone()
 
         return trajectory
 
@@ -280,8 +285,8 @@ class DiffusionUnetHybridImagePIGDMPolicy(BaseImagePolicy):
         action_pred = self.normalizer['action'].unnormalize(naction_pred)
 
         # get action
-        start = To - 1
-        end = start + self.n_action_steps
+        start = To - 1   # 1
+        end = start + self.n_action_steps   # 1 + 6
         action = action_pred[:,start:end]
         
         result = {
