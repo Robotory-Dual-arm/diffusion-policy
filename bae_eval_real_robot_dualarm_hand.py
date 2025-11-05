@@ -97,7 +97,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
         
         # set inference params
         policy.num_inference_steps = 16 # DDIM inference iterations; 노이즈 제거 step 수
-        policy.n_action_steps = policy.horizon - policy.n_obs_steps + 1   # 과거부터 horizon 뽑고, obs만큼 빼고, 1 더하기
+        policy.n_action_steps = policy.horizon - policy.n_obs_steps + 1   # 과거부터 horizon 뽑고, obs만큼 빼고, 1 더하기 (16 - 2 + 1 = 15)
 
     else:
         raise RuntimeError("Unsupported policy type: ", cfg.name)

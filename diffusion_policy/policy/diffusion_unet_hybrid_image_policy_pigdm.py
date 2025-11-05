@@ -194,7 +194,7 @@ class DiffusionUnetHybridImagePIGDMPolicy(BaseImagePolicy):
         scheduler = self.noise_scheduler
 
         # 여기다가 requires_grad=True 설정하면 될거같은데??
-        trajectory = torch.randn(
+        trajectory = torch.randn(   # (B, T, Da) = (배치, horizon, action_dim)
             size=condition_data.shape, 
             dtype=condition_data.dtype,
             device=condition_data.device,
@@ -224,6 +224,8 @@ class DiffusionUnetHybridImagePIGDMPolicy(BaseImagePolicy):
 
         self.prev_action = trajectory.clone()
 
+        # trajectory 모양 뭔지 좀 알아봐라
+
         return trajectory
 
 
@@ -238,9 +240,9 @@ class DiffusionUnetHybridImagePIGDMPolicy(BaseImagePolicy):
         # print('nobs.size:', {k: v.size() for k, v in nobs.items()})
         value = next(iter(nobs.values()))
         B, To = value.shape[:2]
-        T = self.horizon    # 예측할 step수
-        Da = self.action_dim   # action의 dimension
-        Do = self.obs_feature_dim   # 관찰할 것의 dimension
+        T = self.horizon    # 예측할 step수 (a_1, a_2, ..., a_T)
+        Da = self.action_dim   # action의 dimension (x,y,z, ... )
+        Do = self.obs_feature_dim   # obs feature의 dimension
         To = self.n_obs_steps   # 관찰한 step수
 
         # build input
@@ -286,7 +288,9 @@ class DiffusionUnetHybridImagePIGDMPolicy(BaseImagePolicy):
 
         # get action
         start = To - 1   # 1
-        end = start + self.n_action_steps   # 1 + 6
+        end = start + self.n_action_steps   # 1 + 15
+        print('len(action_pred):', action_pred.shape)
+        print('start, end:', start, end)
         action = action_pred[:,start:end]
         
         result = {

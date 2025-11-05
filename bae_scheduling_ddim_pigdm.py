@@ -309,8 +309,14 @@ class DDIMPIGDMScheduler(SchedulerMixin, ConfigMixin):
 
 
         ##### 8. Pi GDM: add guidance
-        if self.prev_action is not None:
-            
+        if prev_action is not None:
+            # prev_action 모양이 뭐냐 = (B, T, Da)
+            assert prev_action.shape[1] == 16, "prev_action should have 16 action steps"
+            prev_action = prev_action[1:]  # To - 1 시점 이전꺼 제외
+            prev_action = prev_action[1:]  # 시간 지난거 제외 
+            prev_action = prev_action[5:]  # 나머지 + (To - 1) 이전꺼
+
+
         # y = 조건 (이전 action 가져와야됨)
         
         # w = 조건 가중치 (from RTC) (이전꺼에서 남는 action 10개 라고 가정)
