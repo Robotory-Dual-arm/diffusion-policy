@@ -177,7 +177,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                     start_delay = 1.0
                     eval_t_start = time.time() + start_delay   # 시스템시간, 영상 로그용
                     t_start = time.monotonic() + start_delay   # 로봇 제어 시간
-                    print("[TIME] t_start: ", t_start%100)
+                    # print("[TIME] t_start: ", t_start%100)
 
                     env.start_episode(eval_t_start)   # 영상 저장 시작
                     # wait for 1/30 sec to get the closest frame actually
@@ -188,7 +188,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                     iter_idx = 0   # trajectory 실행 개수
                     term_area_start_timestamp = float('inf')
                     perv_target_pose = None
-                    while True:
+                    while True:  
                         # calculate timing; 실행할 action 만큼 기다릴 시간
                         # print("[TIME] current time: ", time.monotonic()%100)
                         t_cycle_end = t_start + (iter_idx + steps_per_inference) * dt
@@ -237,6 +237,16 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                         is_new = action_timestamps > (curr_time + action_exec_latency)   # 현재시점 이후 action만 실행
                         # print("[DEBUG] action_timestamps: ", np.array(action_timestamps)%10)
                         print("[DEBUG] is_new: ", is_new)
+
+                        ############################################ timestamp
+                        # while문은 6 * 0.1 주기로 무조건 돌음
+                        # 현재시간 t / 이용하는 obs_timestamp = t - obs_latency
+                        #   1           2              3      4      5      6      7         8         9     10    11    12    13    14    15 16
+                        # -0.1    obs_timestamp      +0.1   +0.2   +0.3   +0.4   +0.5      +0.6
+                        #                                                        -0.1  obs_timestamp  +0.1  +0.2  +0.3  +0.4  +0.5  +0.6
+                        print("Current time:", curr_time)
+                        print("Action timestamps:", action_timestamps)
+                        ############################################
                         
                         if np.sum(is_new) == 0:   # 전부 지나버림
                             # exceeded time budget, still do something
