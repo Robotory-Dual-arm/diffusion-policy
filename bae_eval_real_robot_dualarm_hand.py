@@ -120,6 +120,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
             robot_ip=robot_ip, 
             frequency=frequency,   
             camera_serial_numbers=['242422304502', '336222070518'], # head, front
+            # camera_serial_numbers=['242422304502', '218622276386', '126122270712'], # head, left, right
             n_obs_steps=n_obs_steps,   
             obs_image_resolution=obs_res, 
             obs_float32=True,   
