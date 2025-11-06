@@ -111,22 +111,22 @@ class Dualarm(Node):
         
         self.joint_name = [f"left_joint_{i}" for i in range(1,7)] + \
                             [f"right_joint_{i}" for i in range(1,7)]
-        self.hand_name = ['left_thumb_joint1', 'left_thumb_joint2', 'left_thumb_joint3',
-                          'left_index_joint2', 'left_index_joint3',
-                          'left_middle_joint2', 'left_middle_joint3',
-                          'right_thumb_joint1', 'right_thumb_joint2', 'right_thumb_joint3',
-                          'right_index_joint2', 'right_index_joint3',
-                          'right_middle_joint2', 'right_middle_joint3']
         # self.hand_name = ['left_thumb_joint1', 'left_thumb_joint2', 'left_thumb_joint3',
-        #                   'left_index_joint1', 'left_index_joint2', 'left_index_joint3',
-        #                   'left_middle_joint1', 'left_middle_joint2', 'left_middle_joint3',
-        #                   'left_ring_joint1', 'left_ring_joint2', 'left_ring_joint3',
-        #                   'left_pinky_joint1', 'left_pinky_joint2', 'left_pinky_joint3',
+        #                   'left_index_joint2', 'left_index_joint3',
+        #                   'left_middle_joint2', 'left_middle_joint3',
         #                   'right_thumb_joint1', 'right_thumb_joint2', 'right_thumb_joint3',
-        #                   'right_index_joint1', 'right_index_joint2', 'right_index_joint3',
-        #                   'right_middle_joint1', 'right_middle_joint2', 'right_middle_joint3',
-        #                   'right_ring_joint1', 'right_ring_joint2', 'right_ring_joint3',
-        #                   'right_pinky_joint1', 'right_pinky_joint2', 'right_pinky_joint3']
+        #                   'right_index_joint2', 'right_index_joint3',
+        #                   'right_middle_joint2', 'right_middle_joint3']
+        self.hand_name = ['left_thumb_joint1', 'left_thumb_joint2', 'left_thumb_joint3',
+                          'left_index_joint1', 'left_index_joint2', 'left_index_joint3',
+                          'left_middle_joint1', 'left_middle_joint2', 'left_middle_joint3',
+                          'left_ring_joint1', 'left_ring_joint2', 'left_ring_joint3',
+                          'left_pinky_joint1', 'left_pinky_joint2', 'left_pinky_joint3',
+                          'right_thumb_joint1', 'right_thumb_joint2', 'right_thumb_joint3',
+                          'right_index_joint1', 'right_index_joint2', 'right_index_joint3',
+                          'right_middle_joint1', 'right_middle_joint2', 'right_middle_joint3',
+                          'right_ring_joint1', 'right_ring_joint2', 'right_ring_joint3',
+                          'right_pinky_joint1', 'right_pinky_joint2', 'right_pinky_joint3']
 
         self.joint_subscriber = self.create_subscription(
             JointState,
@@ -166,9 +166,10 @@ class Dualarm(Node):
 
         latest_joint_L = joint_position[:6]
         latest_joint_R = joint_position[6:]
-        latest_hand_L = hand_position[:7]
-        latest_hand_R = hand_position[7:]
-
+        # latest_hand_L = hand_position[:7]
+        # latest_hand_R = hand_position[7:]
+        latest_hand_L = hand_position[0:3] + hand_position[4:6] + hand_position[7:9]
+        latest_hand_R = hand_position[15:18] + hand_position[19:21] + hand_position[22:24]
 
     def joint_command_publish_L(self, joint_position):
         msg = JointState()
@@ -189,9 +190,13 @@ class Dualarm(Node):
         msg = JointState()
         # hand_position = [float(0) for _ in range(30)]
         msg.name = self.hand_name
-        hand_position = [float(x) for x in hand_position]
-        msg.position = hand_position
+        # hand_position = [float(x) for x in hand_position]
+        hand_data = np.zeros(30, dtype=float)
+        hand_data[[0,1,2,4,5,7,8]] = [float(x) for x in hand_position[:7]]
+        hand_data[[15,16,17,19,20,22,23]] = [float(x) for x in hand_position[7:]]
+        msg.position = hand_data.tolist()
         self.hand_command_publisher.publish(msg)
+        # print("[DEBUG] hand command published:", msg.position)
 
     # trajectory 확인용
     def tcp_pose_publish_L(self, tcp_pose):
