@@ -312,9 +312,9 @@ class DDIMPIGDMScheduler(SchedulerMixin, ConfigMixin):
         if prev_action is not None:
             # prev_action 모양이 뭐냐 = (B, T, Da)
             assert prev_action.shape[1] == 16, "prev_action should have 16 action steps"
-            prev_action = prev_action[1:]  # To - 1 시점 이전꺼 제외
-            prev_action = prev_action[1:]  # 시간 지난거 제외 
-            prev_action = prev_action[5:]  # 나머지 + (To - 1) 이전꺼
+            prev_action = prev_action[:, 1:]  # To - 1 시점 이전꺼 제외
+            prev_action = prev_action[:, 1:]  # 시간 지난거 제외 
+            prev_action = prev_action[:, 5:]  # 나머지 + (To - 1) 이전꺼
 
 
         # y = 조건 (이전 action 가져와야됨)
@@ -325,6 +325,7 @@ class DDIMPIGDMScheduler(SchedulerMixin, ConfigMixin):
 
         # grad = 예측한 x_t 에 대해 x_t로 미분한 값 (grad 잘 살려서 가져오기)
         error = (y - pred_original_sample) * w[:, None]
+        # y, origin_sample = (B, T, Da) / w = (T,) -> w[:, None] = (T, 1)
 
         vjp = torch.autograd.grad(outputs=pred_original_sample,
                                   inputs=sample,
