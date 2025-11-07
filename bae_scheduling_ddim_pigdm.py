@@ -319,21 +319,21 @@ class DDIMPIGDMScheduler(SchedulerMixin, ConfigMixin):
         # y = 조건 (이전 action 가져와야됨)
         
         # w = 조건 가중치 (from RTC) (이전꺼에서 남는 action 10개 라고 가정)
-        w = [1., 9/10, 8/10, 7/10, 6/10, 5/10, 4/10, 3/10, 2/10, 1/10, 0., 0., 0., 0., 0., 0.]
+        w = [1., 1., 8/9, 7/9, 6/9, 5/9, 4/9, 3/9, 2/9, 1/9, 0., 0., 0., 0., 0., 0.]
         w = w * torch.expm1(w) / (math.e - 1.0)
 
         # grad = 예측한 x_t 에 대해 x_t로 미분한 값 (grad 잘 살려서 가져오기)
         error = (y - pred_original_sample) * w[:, None]
         # y, origin_sample = (B, T, Da) / w = (T,) -> w[:, None] = (T, 1)
 
-        vjp = torch.autograd.grad(outputs=pred_original_sample,
+        guidance = torch.autograd.grad(outputs=pred_original_sample,
                                   inputs=sample,
                                   grad_outputs=error,
                                   retain_graph=True,
                                   create_graph=False)
 
         # 계수가 필요없나? 아닌가?
-        guidance = 0.00001 * vjp
+        # guidance = 0.00001 * vjp
         
         prev_sample = prev_sample + (alpha_prod_t ** (0.5)) * guidance
 

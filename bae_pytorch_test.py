@@ -31,10 +31,12 @@ for i in range(100):
                             create_graph=False)
     print('vjp', vjp)
     vjp = torch.clamp(vjp, -30, 30)
-    a = a + 0.01 * vjp
+    a = a + 0.3 * vjp
     output = model.forward(a)
     print(i)
     print(output)
     e = y - output
 
+
+J = torch.tensor([[1., 2., 3.], [4., 5., 6.], [7., 8., 9.]])
 
