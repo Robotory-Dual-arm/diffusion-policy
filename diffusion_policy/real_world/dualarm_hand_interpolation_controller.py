@@ -576,7 +576,6 @@ class DualarmInterpolationController(mp.Process):
                 state['robot_receive_timestamp'] = time.time()
                 self.ring_buffer.put(state)   
 
-
                 # fetch command from queue
                 try:
                     commands = self.input_queue.get_all()   # command 긁어옴
