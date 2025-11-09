@@ -159,9 +159,9 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                 # shape_meta 계층구조는 유지하면서 np --> tensor로 변환, 텐서 배치차원 추가
                 obs_dict = dict_apply(obs_dict_np, 
                     lambda x: torch.from_numpy(x).unsqueeze(0).to(device))
-                
                 # obs로 action 예측
                 result = policy.predict_action(obs_dict)   # {'action': ~ , 'action_pred': ~}
+                print('3333333333333333333333333333')
                 # 실제 실행할 action trajectory
                 action = result['action'][0].detach().to('cpu').numpy()   # [0]은 배치차원 제거, tensor --> np
                 assert action.shape[-1] == 32   # action 차원에 맞게 바꿔주기
@@ -249,6 +249,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                         ############################################
                         
                         if np.sum(is_new) == 0:   # 전부 지나버림
+                            print('[WARNING] All actions are outdated!!!!!!!!!!!!!!!!!!!!!!!!!!!')
                             # exceeded time budget, still do something
                             this_target_poses = this_target_poses[[-1]]   # 마지막 action이라도 실행
                             # schedule on next available step
@@ -264,6 +265,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                         
                         # execute actions; 실제 action 실행부분; 
                         # print("[TIME] exec_actions 발사 시간: ", time.monotonic()%100, time.time()%10)
+                        print('[DEBUG] Before exec_actions')
                         env.exec_actions(
                             actions=this_target_poses,
                             timestamps=action_timestamps

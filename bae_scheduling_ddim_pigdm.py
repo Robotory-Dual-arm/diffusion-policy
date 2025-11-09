@@ -22,9 +22,9 @@ from typing import List, Optional, Tuple, Union
 import numpy as np
 import torch
 
-from diffusers.configuration_utils import ConfigMixin, register_to_config
-from diffusers.utils import _COMPATIBLE_STABLE_DIFFUSION_SCHEDULERS, BaseOutput, deprecate
-from diffusers.schedulers.scheduling_utils import SchedulerMixin
+from ..configuration_utils import ConfigMixin, register_to_config
+from ..utils import _COMPATIBLE_STABLE_DIFFUSION_SCHEDULERS, BaseOutput, deprecate
+from .scheduling_utils import SchedulerMixin
 
 
 @dataclass
@@ -75,7 +75,7 @@ def betas_for_alpha_bar(num_diffusion_timesteps, max_beta=0.999) -> torch.Tensor
     return torch.tensor(betas)
 
 
-class DDIMPIGDMScheduler(SchedulerMixin, ConfigMixin):
+class DDIMScheduler(SchedulerMixin, ConfigMixin):
     """
     Denoising diffusion implicit models is a scheduler that extends the denoising procedure introduced in denoising
     diffusion probabilistic models (DDPMs) with non-Markovian guidance.
@@ -312,30 +312,30 @@ class DDIMPIGDMScheduler(SchedulerMixin, ConfigMixin):
         if prev_action is not None:
             # prev_action 모양이 뭐냐 = (B, T, Da)
             assert prev_action.shape[1] == 16, "prev_action should have 16 action steps"
-            y = torch.zeros_like(prev_action)
+            y = torch.zeros_like(prev_action, device='cuda:0')
             y[:, :10] = prev_action[:, 6:]   # 이전 action에서 앞에 6개 자르기
+            # y = 조건 (이전 action 가져와야됨)
+            
+            # w = 조건 가중치 (from RTC)  guidance 추가하니까 inference time 늘어나서 action 1->2 버려짐 + To=2라서 1개 더 버려짐
+            w = torch.tensor([1., 1., 1., 1., 1., 1., 4/5, 3/5, 2/5, 1/5, 0., 0., 0., 0., 0., 0.])
+            w = w.to(sample.device)
+            w = w * torch.expm1(w) / (math.e - 1.0)
+            
 
+            # grad = 예측한 x_t 에 대해 x_t로 미분한 값 (grad 잘 살려서 가져오기)
+            error = (y - pred_original_sample) * w[:, None]
 
-        # y = 조건 (이전 action 가져와야됨)
-        
-        # w = 조건 가중치 (from RTC) (이전꺼에서 남는 action 10개 라고 가정)
-        w = [1., 1., 8/9, 7/9, 6/9, 5/9, 4/9, 3/9, 2/9, 1/9, 0., 0., 0., 0., 0., 0.]
-        w = w * torch.expm1(w) / (math.e - 1.0)
-
-        # grad = 예측한 x_t 에 대해 x_t로 미분한 값 (grad 잘 살려서 가져오기)
-        error = (y - pred_original_sample) * w[:, None]
-        # y, origin_sample = (B, T, Da) / w = (T,) -> w[:, None] = (T, 1)
-
-        guidance = torch.autograd.grad(outputs=pred_original_sample,
-                                  inputs=sample,
-                                  grad_outputs=error,
-                                  retain_graph=True,
-                                  create_graph=False)
-
-        # 계수가 필요없나? 아닌가?
-        # guidance = 0.00001 * vjp
-        
-        prev_sample = prev_sample + (alpha_prod_t ** (0.5)) * guidance
+            # y, origin_sample = (B, T, Da) / w = (T,) -> w[:, None] = (T, 1)
+            guidance = torch.autograd.grad(outputs=pred_original_sample,
+                                    inputs=sample,
+                                    grad_outputs=error,
+                                    retain_graph=True,
+                                    create_graph=False)
+            
+            # 계수가 필요없나? 아닌가?
+            # guidance = 0.00001 * vjp
+            
+            prev_sample = prev_sample + (alpha_prod_t ** (0.5)) * guidance[0]
 
 
 
