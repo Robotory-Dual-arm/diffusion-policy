@@ -78,6 +78,14 @@ def main(input, output, robot_ip, match_dataset, match_episode,
     # 여기서 workspace.model에 cfg.policy가 들어감
 
 
+    # Head = 242422304502, Front = 336222070518, Left = 218622276386, Right = 126122270712
+    serial_numbers = ['242422304502', '336222070518'], # head, front
+    use_pigdm = False
+    if use_pigdm == True:
+        cfg.policy.__target__ = "diffusion_policy.policy.bae_diffusion_unet_hybrid_image_policy_pigdm.DiffusionUnetHybridImagePolicy"
+        cfg.policy.noise_scheduler.__target__ = "bae_scheduling_ddim_pigdm.DDIMScheduler"
+
+
     # hacks for method-specific setup.
     action_offset = 0
     delta_action = False  
@@ -119,8 +127,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
             output_dir=output, 
             robot_ip=robot_ip, 
             frequency=frequency,   
-            camera_serial_numbers=['242422304502', '336222070518'], # head, front
-            # camera_serial_numbers=['242422304502', '218622276386', '126122270712'], # head, left, right
+            camera_serial_numbers=serial_numbers
             n_obs_steps=n_obs_steps,   
             obs_image_resolution=obs_res, 
             obs_float32=True,   
@@ -161,7 +168,6 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                     lambda x: torch.from_numpy(x).unsqueeze(0).to(device))
                 # obs로 action 예측
                 result = policy.predict_action(obs_dict)   # {'action': ~ , 'action_pred': ~}
-                print('3333333333333333333333333333')
                 # 실제 실행할 action trajectory
                 action = result['action'][0].detach().to('cpu').numpy()   # [0]은 배치차원 제거, tensor --> np
                 assert action.shape[-1] == 32   # action 차원에 맞게 바꿔주기
