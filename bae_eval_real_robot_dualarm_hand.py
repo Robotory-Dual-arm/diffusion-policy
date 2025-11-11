@@ -71,19 +71,20 @@ def main(input, output, robot_ip, match_dataset, match_episode,
     ckpt_path = input
     payload = torch.load(open(ckpt_path, 'rb'), pickle_module=dill)
     cfg = payload['cfg']   # yaml에 있던 변수들 설정값
+    
+    # Head = 242422304502, Front = 336222070518, Left = 218622276386, Right = 126122270712
+    serial_numbers = ['242422304502', '336222070518'], # head, front
+    use_pigdm = False
+    if use_pigdm == True:
+        cfg._target_ = 'diffusion_policy.workspace.bae_train_diffusion_unet_hybrid_pigdm_workspace.TrainDiffusionUnetHybridPigdmWorkspace'
+        cfg.policy._target_ = "diffusion_policy.policy.bae_diffusion_unet_hybrid_image_policy_pigdm.DiffusionUnetHybridImagePigdmPolicy"
+        cfg.policy.noise_scheduler._target_ = "bae_scheduling_ddim_pigdm.DDIMPIGDMScheduler"
+
     cls = hydra.utils.get_class(cfg._target_)   # WorkSpace 설정
     workspace = cls(cfg)
     workspace: BaseWorkspace
     workspace.load_payload(payload, exclude_keys=None, include_keys=None)
     # 여기서 workspace.model에 cfg.policy가 들어감
-
-
-    # Head = 242422304502, Front = 336222070518, Left = 218622276386, Right = 126122270712
-    serial_numbers = ['242422304502', '336222070518'], # head, front
-    use_pigdm = False
-    if use_pigdm == True:
-        cfg.policy.__target__ = "diffusion_policy.policy.bae_diffusion_unet_hybrid_image_policy_pigdm.DiffusionUnetHybridImagePolicy"
-        cfg.policy.noise_scheduler.__target__ = "bae_scheduling_ddim_pigdm.DDIMScheduler"
 
 
     # hacks for method-specific setup.
@@ -95,7 +96,6 @@ def main(input, output, robot_ip, match_dataset, match_episode,
         policy = workspace.model   # state_dicts의 model을 가져옴 (가중치 값들)
         if cfg.training.use_ema:
             policy = workspace.ema_model   # ema_model 가져옴 (가중치 값들)
-
         device = torch.device('cuda')
         policy.eval().to(device)
         

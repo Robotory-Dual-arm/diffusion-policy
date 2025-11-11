@@ -20,7 +20,7 @@ import diffusion_policy.model.vision.crop_randomizer as dmvc
 from diffusion_policy.common.pytorch_util import dict_apply, replace_submodules
 
 
-class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
+class DiffusionUnetHybridImagePigdmPolicy(BaseImagePolicy):
     def __init__(self, 
             shape_meta: dict,
             noise_scheduler: DDPMScheduler,
