@@ -22,10 +22,12 @@ from typing import List, Optional, Tuple, Union
 import numpy as np
 import torch
 
-from ..configuration_utils import ConfigMixin, register_to_config
-from ..utils import _COMPATIBLE_STABLE_DIFFUSION_SCHEDULERS, BaseOutput, deprecate
-from .scheduling_utils import SchedulerMixin
-
+# from ..configuration_utils import ConfigMixin, register_to_config
+# from ..utils import _COMPATIBLE_STABLE_DIFFUSION_SCHEDULERS, BaseOutput, deprecate
+# from .scheduling_utils import SchedulerMixin
+from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.utils import _COMPATIBLE_STABLE_DIFFUSION_SCHEDULERS, BaseOutput, deprecate
+from diffusers.schedulers.scheduling_utils import SchedulerMixin
 
 @dataclass
 # Copied from diffusers.schedulers.scheduling_ddpm.DDPMSchedulerOutput with DDPM->DDIM
@@ -317,7 +319,7 @@ class DDIMPIGDMScheduler(SchedulerMixin, ConfigMixin):
             # y = 조건 (이전 action 가져와야됨)
             
             # w = 조건 가중치 (from RTC)  guidance 추가하니까 inference time 늘어나서 action 1->2 버려짐 + To=2라서 1개 더 버려짐
-            w = torch.tensor([1., 1., 1., 1., 1., 1., 4/5, 3/5, 2/5, 1/5, 0., 0., 0., 0., 0., 0.])
+            w = torch.tensor([1., 1., 1., 7/8, 6/8, 5/8, 4/8, 3/8, 2/8, 1/8, 0., 0., 0., 0., 0., 0.])
             w = w.to(sample.device)
             w = w * torch.expm1(w) / (math.e - 1.0)
             
