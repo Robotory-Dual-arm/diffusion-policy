@@ -73,8 +73,8 @@ def main(input, output, robot_ip, match_dataset, match_episode,
     cfg = payload['cfg']   # yaml에 있던 변수들 설정값
     
     # Head = 242422304502, Front = 336222070518, Left = 218622276386, Right = 126122270712
-    serial_numbers = ['242422304502', '336222070518'], # head, front
-    use_pigdm = False
+    serial_numbers = ['242422304502', '336222070518'] # head, front
+    use_pigdm = True
     if use_pigdm == True:
         cfg._target_ = 'diffusion_policy.workspace.bae_train_diffusion_unet_hybrid_pigdm_workspace.TrainDiffusionUnetHybridPigdmWorkspace'
         cfg.policy._target_ = "diffusion_policy.policy.bae_diffusion_unet_hybrid_image_policy_pigdm.DiffusionUnetHybridImagePigdmPolicy"
@@ -127,7 +127,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
             output_dir=output, 
             robot_ip=robot_ip, 
             frequency=frequency,   
-            camera_serial_numbers=serial_numbers
+            camera_serial_numbers=serial_numbers,
             n_obs_steps=n_obs_steps,   
             obs_image_resolution=obs_res, 
             obs_float32=True,   
