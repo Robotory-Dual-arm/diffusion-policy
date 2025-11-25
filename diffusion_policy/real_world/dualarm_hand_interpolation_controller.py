@@ -101,7 +101,7 @@ def servoJ(robot, current_joint, target_pose, acc_pos_limit=40.0, acc_rot_limit=
     if np.linalg.norm(dq[3:]) > acc_rot_limit:
         dq[3:] *= acc_rot_limit / np.linalg.norm(dq[3:])
     
-    next_joint = current_joint + dq * 0.6
+    next_joint = current_joint + dq * 0.5
     return next_joint   # rad
 
 
@@ -623,7 +623,7 @@ class DualarmInterpolationController(mp.Process):
                     # 이걸로 제어 (n_cmd 1개씩 제어)
                     elif cmd == Command.SCHEDULE_WAYPOINT.value:
                         target_pose = command['target_pose']   # abs; (pose_L, rot6d_L, pose_R, rot6d_R)
-                        print('[DEBUG] target_pose:', target_pose[:18])
+                        # print('[DEBUG] target_pose:', target_pose[:18])
                         target_position_L = target_pose[:3]   # 3d position, m
                         target_position_R = target_pose[9:12]   # 3d position, m
                         target_rotvec_L = rot6d_to_rotvec(target_pose[3:9])   # 6d rotation -> rot_vec
@@ -634,11 +634,11 @@ class DualarmInterpolationController(mp.Process):
                         target_pose = np.concatenate([target_position_L, target_rotvec_L, target_position_R, target_rotvec_R,
                                                       target_hand_L, target_hand_R])   # (32,)
 
-                        # if cmd_index < 6:
-                        #     node.tcp_pose_publish_L(target_position_L)
-                        # cmd_index += 1
-                        # if cmd_index == 14:
-                        #     cmd_index = 0
+                        if cmd_index < 6:
+                            node.tcp_pose_publish_L(target_position_L)
+                        cmd_index += 1
+                        if cmd_index == 14:
+                            cmd_index = 0
 
                         # print('[DEBUG] target_pose', target_pose)
                         

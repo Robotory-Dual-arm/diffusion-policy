@@ -329,15 +329,24 @@ class DDIMPIGDMScheduler(SchedulerMixin, ConfigMixin):
 
             # y, origin_sample = (B, T, Da) / w = (T,) -> w[:, None] = (T, 1)
             guidance = torch.autograd.grad(outputs=pred_original_sample,
-                                    inputs=sample,
-                                    grad_outputs=error,
-                                    retain_graph=True,
-                                    create_graph=False)
+                                           inputs=sample,
+                                           grad_outputs=error,
+                                           retain_graph=True,
+                                           create_graph=False)
             
+            guidance_scale = 5.0
+
+            print('y 1 : ', y[:, 1,2])
+            print('y 2 : ', y[:, 2,2])
+            print('error 2 : ', error[:, 2,2])
+            print('pred_original_sample 2 : ', pred_original_sample[:, 2,2])
+            print('guidance 2 : ', guidance[0][:, 2,2])
+            print('prev_sample 2 : ', prev_sample[:, 2,2])
+
             # 계수가 필요없나? 아닌가?
             # guidance = 0.00001 * vjp
             
-            prev_sample = prev_sample + (alpha_prod_t ** (0.5)) * guidance[0]
+            prev_sample = prev_sample + (alpha_prod_t ** (0.5)) * guidance[0] * guidance_scale
 
 
 
