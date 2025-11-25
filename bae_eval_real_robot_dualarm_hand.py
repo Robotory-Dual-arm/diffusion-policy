@@ -74,7 +74,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
     
     # Head = 242422304502, Front = 336222070518, Left = 218622276386, Right = 126122270712
     serial_numbers = ['242422304502', '336222070518'] # head, front
-    use_pigdm = True
+    use_pigdm = False
     if use_pigdm == True:
         cfg._target_ = 'diffusion_policy.workspace.bae_train_diffusion_unet_hybrid_pigdm_workspace.TrainDiffusionUnetHybridPigdmWorkspace'
         cfg.policy._target_ = "diffusion_policy.policy.bae_diffusion_unet_hybrid_image_policy_pigdm.DiffusionUnetHybridImagePigdmPolicy"

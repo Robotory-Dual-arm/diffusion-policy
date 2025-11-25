@@ -207,7 +207,7 @@ class DiffusionUnetHybridImagePigdmPolicy(BaseImagePolicy):
         for t in scheduler.timesteps:
 
             with torch.enable_grad():
-
+                print(f'Denoising step {t} ====================================================')
                 # 1. apply conditioning; obs_as_global_cond=False일때 condition data 설정
                 trajectory[condition_mask] = condition_data[condition_mask]
                 trajectory.requires_grad_(True)
