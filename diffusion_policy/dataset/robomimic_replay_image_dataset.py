@@ -50,7 +50,7 @@ class RobomimicReplayImageDataset(BaseImageDataset):
             from_rep='axis_angle', to_rep=rotation_rep)
 
         replay_buffer = None
-        if use_cache:
+        if use_cache:   # True
             cache_zarr_path = dataset_path + '.zarr.zip'
             cache_lock_path = cache_zarr_path + '.lock'
             print('Acquiring lock on cache.')
@@ -164,7 +164,7 @@ class RobomimicReplayImageDataset(BaseImageDataset):
             this_normalizer = get_identity_normalizer_from_stat(stat)
         normalizer['action'] = this_normalizer
 
-        # obs
+        # lowdim
         for key in self.lowdim_keys:
             stat = array_to_stats(self.replay_buffer[key])
 

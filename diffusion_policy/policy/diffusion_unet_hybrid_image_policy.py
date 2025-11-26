@@ -105,6 +105,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             )
         # robomimic bc-rnn의 obs encoder 사용
         obs_encoder = policy.nets['policy'].nets['encoder'].nets['obs']
+        print('obs_encoder:', obs_encoder)
         
         # BatchNorm -> GroupNorm
         if obs_encoder_group_norm:
@@ -120,7 +121,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         
         # inference시 고정 crop
         # obs_encoder.obs_randomizers['agentview_image']
-        if eval_fixed_crop:
+        if eval_fixed_crop:   # True
             replace_submodules(
                 root_module=obs_encoder,
                 predicate=lambda x: isinstance(x, rmbn.CropRandomizer),
