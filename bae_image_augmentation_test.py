@@ -10,9 +10,15 @@ augmented_image_path = "bae_image_augmentation_test"
 
 origin_image = Image.open(origin_image_path).convert("RGB")
 
-transform = T.Compose([T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.05),
-                       T.RandomGrayscale(p=0.05),
-                       T.ToTensor()])
+# print('int', np.array(origin_image), np.array(origin_image).shape)
+# float_image = T.ToTensor()(origin_image)
+# print('float', float_image, float_image.shape)
+
+# breakpoint()
+
+transform = T.Compose([T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.03),
+                       T.RandomGrayscale(p=0.005)])
+                       
 
 num_augment = 14
 
@@ -31,8 +37,7 @@ axes[0].axis("off")
 
 for i in range(num_augment):
     augmented_image = transform(origin_image)
-    augmented_image_pil = T.ToPILImage()(augmented_image)
-    axes[i+1].imshow(augmented_image_pil)
+    axes[i+1].imshow(augmented_image)
     axes[i+1].set_title(f"Augmented Image {i+1}")
     axes[i+1].axis("off")
 
@@ -47,4 +52,3 @@ plt.show()
 #     augmented_image = transform(origin_image)
 #     augmented_image_pil = T.ToPILImage()(augmented_image)
 #     augmented_image_pil.save(f"{augmented_image_path}/augmented_image_{i}.png")
-

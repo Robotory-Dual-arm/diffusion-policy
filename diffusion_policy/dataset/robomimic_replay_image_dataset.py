@@ -204,10 +204,19 @@ class RobomimicReplayImageDataset(BaseImageDataset):
         for key in self.rgb_keys:
             # move channel last to channel first
             # T,H,W,C
-            # convert uint8 image to float32
+            # convert uint8 image to float32 / (0 - 255) -> (0.0 - 1.0)
             obs_dict[key] = np.moveaxis(data[key][T_slice],-1,1
                 ).astype(np.float32) / 255.
             # T,C,H,W
+            # print('data[key][T_slice]', data[key][T_slice])
+            # print('obs_dict[key]', np.moveaxis(data[key][T_slice],-1,1
+            #     ).astype(np.float32) / 255.)
+            # print('shape', obs_dict[key].shape)
+            # print('key:', key)
+            # print('obs_dict[image0].shape:', obs_dict[key].shape)
+            # breakpoint()
+
+
             del data[key]
         for key in self.lowdim_keys:
             obs_dict[key] = data[key][T_slice].astype(np.float32)
