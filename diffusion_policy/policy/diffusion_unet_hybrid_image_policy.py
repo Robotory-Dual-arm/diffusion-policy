@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, reduce
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+import torchvision.transforms as T
 
 from diffusion_policy.model.common.normalizer import LinearNormalizer
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
@@ -105,7 +106,6 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             )
         # robomimic bc-rnn의 obs encoder 사용
         obs_encoder = policy.nets['policy'].nets['encoder'].nets['obs']
-        print('obs_encoder:', obs_encoder)
         
         # BatchNorm -> GroupNorm
         if obs_encoder_group_norm:
@@ -180,7 +180,10 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
 
         print("Diffusion params: %e" % sum(p.numel() for p in self.model.parameters()))
         print("Vision params: %e" % sum(p.numel() for p in self.obs_encoder.parameters()))
-    
+
+        self.image00 = None
+        self.image01 = None
+
     # ========= inference  ============
     def conditional_sample(self, 
             condition_data, condition_mask,
@@ -297,6 +300,15 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
     def compute_loss(self, batch):
         # normalize input
         assert 'valid_mask' not in batch
+
+        # 이미지 augmentation!!!!!!!!!!!!!!!
+        transform = T.Compose([T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.03),
+                               T.RandomGrayscale(p=0.005)])
+        num_image = len([key for key in batch['obs'].keys() if 'image' in key])
+        for i in range(num_image):
+            batch['obs'][f'image{i}'] = transform(batch['obs'][f'image{i}'])
+        
+
         nobs = self.normalizer.normalize(batch['obs'])
         nactions = self.normalizer['action'].normalize(batch['action'])
         batch_size = nactions.shape[0]
