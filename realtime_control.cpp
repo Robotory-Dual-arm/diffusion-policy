@@ -466,7 +466,7 @@ void TorqueRtNode::TorqueRtStreamPublisher()
     has_next = true;
     
     if(has_prev && has_next) {
-        Eigen::Matrix<double,6,6> Jdot = (J_next - J_prev) / (2.0 * dt);
+        Eigen::Matrix<double,6,6> Jdot = (J_next - J_prev) / (2.0 * dt); // 2dt? 아닌듯!!!!!! 계산해야된다고함
         Jdot_lpf = alpha * Jdot + (1.0 - alpha) * Jdot_lpf;  // 간단 LPF
     }
     
