@@ -1,0 +1,21 @@
+Diffusion 코드 수정 방법
+
+- Training
+
+config.task  ->  name, dataset_path, shape_meta
+config
+
+robomimic_replay_image_dataset.py  ->  get_normalizer()
+normalize_util.py  ->  robomimic_abs_action_only_dual_arm_normalizer_from_stat()
+
+
+- Rollout
+
+
+
+
+
+
+- 이미지 augmentation
+
+diffusion_unet_hybrid_image_policy.py  ->  compute_loss()
