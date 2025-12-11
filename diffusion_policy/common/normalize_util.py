@@ -188,8 +188,7 @@ def robomimic_abs_action_only_dual_arm_normalizer_from_stat(stat):
 
     Da = stat['max'].shape[-1]
 
-    if Da == 32:
-        # robot_pose_L(3) + robot_6d_rot_L(6) + robot_pose_R(3) + robot_6d_rot_R(6) + hand_pose_L(7) +hand_pose_R(7)
+    if Da == 32: # robot_pose_L(3) + robot_6d_rot_L(6) + robot_pose_R(3) + robot_6d_rot_R(6) + hand_pose_L(7) +hand_pose_R(7)
         result = dict_apply_split(
             stat, lambda x: {
                 'pos0': x[..., :3],
@@ -213,6 +212,27 @@ def robomimic_abs_action_only_dual_arm_normalizer_from_stat(stat):
         info = dict_apply_reduce(
             [pos0_info, other0_info, pos1_info, other1_info, hand_pos0_info, hand_pos1_info], 
             lambda x: np.concatenate(x,axis=-1))
+    
+
+    elif Da == 15: # robot_pose_R(3) + robot_6d_rot_R(6) + hand_pose_R(6)
+        result = dict_apply_split(
+            stat, lambda x: {
+                'pos0': x[...,:3],
+                'other0': x[...,3:9],
+                'hand_pos0': x[...,9:]
+            })
+
+        pos0_param, pos0_info = get_pos_param_info(result['pos0'])
+        other0_param, other0_info = get_other_param_info(result['other0'])
+        hand_pos0_param, hand_pos0_info = get_pos_param_info(result['hand_pos0'])
+
+        param = dict_apply_reduce(
+            [pos0_param, other0_param, hand_pos0_param], 
+            lambda x: np.concatenate(x,axis=-1))
+        info = dict_apply_reduce(
+            [pos0_info, other0_info, hand_pos0_info], 
+            lambda x: np.concatenate(x,axis=-1))
+        
         
     else:    
         Dah = Da // 2
