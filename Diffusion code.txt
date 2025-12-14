@@ -1,21 +1,22 @@
 Diffusion 코드 수정 방법
 
-- Training
-
+=== Training ===
 config.task  ->  name, dataset_path, shape_meta
 config
 
-robomimic_replay_image_dataset.py  ->  get_normalizer()
-normalize_util.py  ->  robomimic_abs_action_only_dual_arm_normalizer_from_stat()
+robomimic_replay_image_dataset.py  ->  get_normalizer() <obs 정규화>
+normalize_util.py  ->  robomimic_abs_action_only_dual_arm_normalizer_from_stat() <action 정규화>
 
 
-- Rollout
+=== Rollout ===
+eval_real_robot.py  ->  따로 만들기, 액션 차원 맞추기, import 설정
+real_world.real_env.py  ->  DEFAULT_OBS_KEY_MAP
+
+real_world.interpolation_controller.py  ->  따로 만들기, sub, pub, receive_keys, 액션 차원 맞추기, action_type
+pose_trajectory_inperpolator.py  ->  액션 차원 맞추기
 
 
 
 
-
-
-- 이미지 augmentation
-
+=== 이미지 augmentation ===
 diffusion_unet_hybrid_image_policy.py  ->  compute_loss()
