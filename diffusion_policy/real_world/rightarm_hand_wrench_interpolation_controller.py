@@ -2,12 +2,13 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
+from rclpy.callback_groups import ReentrantCallbackGroup
 
 from spatialmath import SE3
 import spatialmath.base as smb
 from std_msgs.msg import Int32, Float64, String, Float64MultiArray
-from geometry_msgs.msg import PoseStamped
-from sensor_msgs.msg import JointState
+from geometry_msgs.msg import PoseStamped, WrenchStamped
+from sensor_msgs.msg import JointState, MultiDOFJointState
 
 import roboticstoolbox as rtb
 from scipy.spatial.transform import Rotation as R
@@ -108,38 +109,53 @@ def servoJ(robot, current_joint, target_pose, acc_pos_limit=40.0, acc_rot_limit=
 class Dualarm(Node):
     def __init__(self):
         super().__init__('dualarm_node')
-        
+        self.callback_group = ReentrantCallbackGroup()
+
         self.joint_name = [f"left_joint_{i}" for i in range(1,7)] + \
                             [f"right_joint_{i}" for i in range(1,7)]
-        # self.hand_name = ['left_thumb_joint1', 'left_thumb_joint2', 'left_thumb_joint3',
-        #                   'left_index_joint2', 'left_index_joint3',
-        #                   'left_middle_joint2', 'left_middle_joint3',
-        #                   'right_thumb_joint1', 'right_thumb_joint2', 'right_thumb_joint3',
-        #                   'right_index_joint2', 'right_index_joint3',
-        #                   'right_middle_joint2', 'right_middle_joint3']
-        self.hand_name = ['left_thumb_joint1', 'left_thumb_joint2', 'left_thumb_joint3',
-                          'left_index_joint1', 'left_index_joint2', 'left_index_joint3',
-                          'left_middle_joint1', 'left_middle_joint2', 'left_middle_joint3',
-                          'left_ring_joint1', 'left_ring_joint2', 'left_ring_joint3',
-                          'left_pinky_joint1', 'left_pinky_joint2', 'left_pinky_joint3',
-                          'right_thumb_joint1', 'right_thumb_joint2', 'right_thumb_joint3',
-                          'right_index_joint1', 'right_index_joint2', 'right_index_joint3',
-                          'right_middle_joint1', 'right_middle_joint2', 'right_middle_joint3',
-                          'right_ring_joint1', 'right_ring_joint2', 'right_ring_joint3',
-                          'right_pinky_joint1', 'right_pinky_joint2', 'right_pinky_joint3']
+        
+        self.hand_name = [f"left_thumb_joint{i}" for i in range(1,4)] + \
+                         [f"left_index_joint{i}" for i in range(1,4)] + \
+                         [f"left_middle_joint{i}" for i in range(1,4)] + \
+                         [f"left_ring_joint{i}" for i in range(1,4)] + \
+                         [f"left_pinky_joint{i}" for i in range(1,4)] + \
+                         [f"right_thumb_joint{i}" for i in range(1,4)] + \
+                         [f"right_index_joint{i}" for i in range(1,4)] + \
+                         [f"right_middle_joint{i}" for i in range(1,4)] + \
+                         [f"right_ring_joint{i}" for i in range(1,4)] + \
+                         [f"right_pinky_joint{i}" for i in range(1,4)]
+      
 
         self.joint_subscriber = self.create_subscription(
             JointState,
             '/joint_states',
             self.joint_callback,
-            10
+            10,
+            callback_group=self.callback_group
+        )
+        # 오른손 wrench wrist
+        self.wrench_wrist_R_subscriber = self.create_subscription(
+            WrenchStamped,
+            '/aft_sensor1/wrench',
+            self.wrench_wrist_R_callback,
+            10,
+            callback_group=self.callback_group
+        )
+        # 오른손 wrench finger
+        self.wrench_hand_R_subscriber = self.create_subscription(
+            MultiDOFJointState,
+            '/right_ft_sensor_broadcaster/wrench',
+            self.wrench_hand_R_callback,
+            10,
+            callback_group=self.callback_group
         )
 
-        self.joint_command_publisher_L = self.create_publisher(
-            JointState,
-            '/left_dsr_joint_controller/joint_state_command',
-            10
-        )
+
+        # self.joint_command_publisher_L = self.create_publisher(
+        #     JointState,
+        #     '/left_dsr_joint_controller/joint_state_command',
+        #     10
+        # )
         self.joint_command_publisher_R = self.create_publisher(
             JointState,
             '/right_dsr_joint_controller/joint_state_command',
@@ -150,12 +166,13 @@ class Dualarm(Node):
             '/aidin_dualarm_joint_controller/joint_state_command',
             10
         )
+        
         # trajectory 확인용
-        self.tcp_publisher_L = self.create_publisher(
-            PoseStamped,
-            '/TCP_target_pose_L',
-            10
-        )
+        # self.tcp_publisher_L = self.create_publisher(
+        #     PoseStamped,
+        #     '/TCP_target_pose_L',
+        #     10
+        # )
 
     def joint_callback(self, msg):
         global latest_joint_L, latest_joint_R, latest_hand_L, latest_hand_R
@@ -164,19 +181,41 @@ class Dualarm(Node):
         joint_position = [joint_mapping.get(j) for j in self.joint_name]
         hand_position = [joint_mapping.get(j) for j in self.hand_name]
 
-        latest_joint_L = joint_position[:6]
+        # latest_joint_L = joint_position[:6]
         latest_joint_R = joint_position[6:]
-        # latest_hand_L = hand_position[:7]
-        # latest_hand_R = hand_position[7:]
-        latest_hand_L = hand_position[0:3] + hand_position[4:6] + hand_position[7:9]
-        latest_hand_R = hand_position[15:18] + hand_position[19:21] + hand_position[22:24]
+        # latest_hand_L = hand_position[0:3] + hand_position[4:6] + hand_position[7:9]
+        latest_hand_R = hand_position[15:18] + hand_position[20:21] + hand_position[23:24] + hand_position[26:27]
+    
+    # def wrench_wrist_L_callback(self, msg):
+    #     global latest_wrench_wrist_L
+    #     latest_wrench_wrist_L = np.array([
+    #         msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z,
+    #         msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z
+    #     ])
+    def wrench_wrist_R_callback(self, msg):
+        global latest_wrench_wrist_R
+        latest_wrench_wrist_R = np.array([
+            msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z,
+            msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z
+        ])
+    def wrench_hand_R_callback(self, msg):
+        global latest_wrench_thumb, latest_wrench_index, latest_wrench_middle, latest_wrench_ring, latest_wrench_baby
+        forces = [np.array([msg.wrench[i].force.x, msg.wrench[i].force.y, msg.wrench[i].force.z,
+                            msg.wrench[i].torque.x, msg.wrench[i].torque.y, msg.wrench[i].torque.z
+                           ]) for i in range(5)]
+        
+        latest_wrench_thumb = forces[0] # 안씀
+        latest_wrench_index = forces[1][2:3] # z축 힘만 사용
+        latest_wrench_middle = forces[2][2:3] # z축 힘만 사용
+        latest_wrench_ring = forces[3][2:3] # z축 힘만 사용
+        latest_wrench_baby = forces[4] # 안씀
 
-    def joint_command_publish_L(self, joint_position):
-        msg = JointState()
-        msg.name = self.joint_name[:6]
-        joint_position = [float(x) for x in joint_position]
-        msg.position = joint_position
-        self.joint_command_publisher_L.publish(msg)
+    # def joint_command_publish_L(self, joint_position):
+    #     msg = JointState()
+    #     msg.name = self.joint_name[:6]
+    #     joint_position = [float(x) for x in joint_position]
+    #     msg.position = joint_position
+    #     self.joint_command_publisher_L.publish(msg)
         
     def joint_command_publish_R(self, joint_position):
         msg = JointState()
@@ -186,27 +225,26 @@ class Dualarm(Node):
         self.joint_command_publisher_R.publish(msg)
 
     def hand_command_publish(self, hand_position):
-        assert len(hand_position) == 14    # 7*2
+        assert len(hand_position) == 6    
         msg = JointState()
         # hand_position = [float(0) for _ in range(30)]
         msg.name = self.hand_name
         # hand_position = [float(x) for x in hand_position]
         hand_data = np.zeros(30, dtype=float)
-        hand_data[[0,1,2,4,5,7,8]] = [float(x) for x in hand_position[:7]]
-        hand_data[[15,16,17,19,20,22,23]] = [float(x) for x in hand_position[7:]]
+        hand_data[[15,16,17,19,22,25]] = [float(x) for x in hand_position[:]]
         msg.position = hand_data.tolist()
         self.hand_command_publisher.publish(msg)
         # print("[DEBUG] hand command published:", msg.position)
 
     # trajectory 확인용
-    def tcp_pose_publish_L(self, tcp_pose):
-        msg = PoseStamped()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.pose.position.x = float(tcp_pose[0])
-        msg.pose.position.y = float(tcp_pose[1])
-        msg.pose.position.z = float(tcp_pose[2])
+    # def tcp_pose_publish_L(self, tcp_pose):
+    #     msg = PoseStamped()
+    #     msg.header.stamp = self.get_clock().now().to_msg()
+    #     msg.pose.position.x = float(tcp_pose[0])
+    #     msg.pose.position.y = float(tcp_pose[1])
+    #     msg.pose.position.z = float(tcp_pose[2])
         
-        self.tcp_publisher_L.publish(msg)
+    #     self.tcp_publisher_L.publish(msg)
 
 class Command(enum.Enum):
     STOP = 0
@@ -291,7 +329,7 @@ class DualarmInterpolationController(mp.Process):
         example = {
             'cmd': Command.SERVOL.value,
             # 'target_pose': np.zeros((6,), dtype=np.float64),
-            'target_pose': np.zeros((32,), dtype=np.float64),
+            'target_pose': np.zeros((15,), dtype=np.float64),
             'duration': 0.0,
             'target_time': 0.0
         }
@@ -304,28 +342,41 @@ class DualarmInterpolationController(mp.Process):
         # build ring buffer; state 담아놓을 메모리
         if receive_keys is None:
             receive_keys = [
-                'robot_pose_L',   
+                # 'robot_pose_L',   
                 'robot_pose_R',
-                'robot_quat_L',
+                # 'robot_quat_L',
                 'robot_quat_R',
-                'hand_pose_L',
+                # 'hand_pose_L',
                 'hand_pose_R'
+                'wrench_wrist_R',
+                'wrench_index_R',
+                'wrench_middle_R',
+                'wrench_ring_R'
             ]
         
         example = dict()
         for key in receive_keys:
-            if key == 'robot_pose_L':
+            # if key == 'robot_pose_L':
+            #     example[key] = np.zeros((3,), dtype=np.float64)
+            if key == 'robot_pose_R':
                 example[key] = np.zeros((3,), dtype=np.float64)
-            elif key == 'robot_pose_R':
-                example[key] = np.zeros((3,), dtype=np.float64)
-            elif key == 'robot_quat_L':
-                example[key] = np.zeros((4,), dtype=np.float64)
+            # elif key == 'robot_quat_L':
+            #     example[key] = np.zeros((4,), dtype=np.float64)
             elif key == 'robot_quat_R':
                 example[key] = np.zeros((4,), dtype=np.float64)
-            elif key == 'hand_pose_L':
-                example[key] = np.zeros((7,), dtype=np.float64)
+            # elif key == 'hand_pose_L':
+            #     example[key] = np.zeros((7,), dtype=np.float64)
             elif key == 'hand_pose_R':
-                example[key] = np.zeros((7,), dtype=np.float64)
+                example[key] = np.zeros((6,), dtype=np.float64)
+            elif key == 'wrench_wrist_R':
+                example[key] = np.zeros((6,), dtype=np.float64)
+            elif key == 'wrench_index_R':
+                example[key] = np.zeros((1,), dtype=np.float64)
+            elif key == 'wrench_middle_R':
+                example[key] = np.zeros((1,), dtype=np.float64)
+            elif key == 'wrench_ring_R':
+                example[key] = np.zeros((1,), dtype=np.float64)
+            
         example['robot_receive_timestamp'] = time.time()
         ring_buffer = SharedMemoryRingBuffer.create_from_examples(   
             shm_manager=shm_manager,
@@ -399,7 +450,7 @@ class DualarmInterpolationController(mp.Process):
         assert target_time > time.time()
         pose = np.array(pose)
         # assert pose.shape == (6,)
-        assert pose.shape == (32,)   
+        assert pose.shape == (15,)   
 
         message = {
             'cmd': Command.SCHEDULE_WAYPOINT.value,
@@ -431,47 +482,47 @@ class DualarmInterpolationController(mp.Process):
         urdf_path = "/home/vision/dualarm_ws/src/doosan-robot2/dsr_description2/urdf/m0609.white.urdf"
         doosan_robot = rtb.ERobot.URDF(urdf_path)   
 
-        global latest_joint_L, latest_joint_R, latest_hand_L, latest_hand_R
-        latest_joint_L, latest_joint_R, latest_hand_L, latest_hand_R = None, None, None, None
+        global latest_joint_R, latest_hand_R
+        latest_joint_R, latest_hand_R = None, None
+
+        global latest_wrench_wrist_R, latest_wrench_index_R, latest_wrench_middle_R, latest_wrench_ring_R
+        latest_wrench_wrist_R, latest_wrench_index_R, latest_wrench_middle_R, latest_wrench_ring_R = None, None, None, None
+
         rclpy.init(args=None)
         node = Dualarm()
-        # exec = SingleThreadedExecutor()
-        # exec.add_node(node)
-
+        
         try:
             rclpy.spin_once(node)
-            # if self.verbose:   # False
-            #     print(f"[RTDEPositionalController] Connect to robot: {robot_ip}")
-
          
             # main loop
             dt = 1. / self.frequency
 
-            curr_joint_L = latest_joint_L
+            # curr_joint_L = latest_joint_L
             curr_joint_R = latest_joint_R
-            curr_hand_L = latest_hand_L
+            # curr_hand_L = latest_hand_L
             curr_hand_R = latest_hand_R
 
-            curr_tcp_L = doosan_robot.fkine(curr_joint_L)
+            # curr_tcp_L = doosan_robot.fkine(curr_joint_L)
             curr_tcp_R = doosan_robot.fkine(curr_joint_R)
 
-            curr_tcp_pose_L = curr_tcp_L.t
+            # curr_tcp_pose_L = curr_tcp_L.t
             curr_tcp_pose_R = curr_tcp_R.t
-            curr_tcp_rotmat_L = curr_tcp_L.R
+            # curr_tcp_rotmat_L = curr_tcp_L.R
             curr_tcp_rotmat_R = curr_tcp_R.R
                 
-            curr_tcp_quat_L = R.from_matrix(curr_tcp_rotmat_L).as_quat()
+            # curr_tcp_quat_L = R.from_matrix(curr_tcp_rotmat_L).as_quat()
             curr_tcp_quat_R = R.from_matrix(curr_tcp_rotmat_R).as_quat()
 
-            if curr_tcp_quat_L[3] < 0:
-                curr_tcp_quat_L = -curr_tcp_quat_L
+            # if curr_tcp_quat_L[3] < 0:
+            #     curr_tcp_quat_L = -curr_tcp_quat_L
             if curr_tcp_quat_R[3] < 0:
                 curr_tcp_quat_R = -curr_tcp_quat_R
 
-            curr_tcp_rotvec_L = R.from_quat(curr_tcp_quat_L).as_rotvec()
+            # curr_tcp_rotvec_L = R.from_quat(curr_tcp_quat_L).as_rotvec()
             curr_tcp_rotvec_R = R.from_quat(curr_tcp_quat_R).as_rotvec()
 
-            curr_pose = np.concatenate([curr_tcp_pose_L, curr_tcp_rotvec_L, curr_tcp_pose_R, curr_tcp_rotvec_R, curr_hand_L, curr_hand_R])
+            # curr_pose = np.concatenate([curr_tcp_pose_L, curr_tcp_rotvec_L, curr_tcp_pose_R, curr_tcp_rotvec_R, curr_hand_L, curr_hand_R])
+            curr_pose = np.concatenate([curr_tcp_pose_R, curr_tcp_rotvec_R, curr_hand_R])
             print("[DEBUG] curr_pose:", curr_pose)
             # use monotonic time to make sure the control loop never go backward
             curr_t = time.monotonic()
@@ -479,7 +530,7 @@ class DualarmInterpolationController(mp.Process):
             pose_interp = PoseTrajectoryInterpolator(  
                 times=[curr_t],     # [ time ]
                 poses=[curr_pose],  # [ [x,y,z,rx,ry,rz] ]
-                action_type='dualarm_hand7'
+                action_type='rightarm_hand6'
             )
 
             iter_idx = 0
@@ -503,76 +554,86 @@ class DualarmInterpolationController(mp.Process):
             
                 # 두산 로봇 제어                
                 # pose_command 해체 
-                target_pose_L = pose_command[:3]
-                target_rotvec_L = pose_command[3:6]
-                target_pose_R = pose_command[6:9]
-                target_rotvec_R = pose_command[9:12]
-                target_hand_L = pose_command[12:19]
-                target_hand_R = pose_command[19:26]
+                target_pose_R = pose_command[0:3]
+                target_rotvec_R = pose_command[3:6]
+                target_hand_R = pose_command[6:12]
 
-                target_quat_L = R.from_rotvec(target_rotvec_L).as_quat()
+                # target_quat_L = R.from_rotvec(target_rotvec_L).as_quat()
                 target_quat_R = R.from_rotvec(target_rotvec_R).as_quat()
                 
                 # 전처리
-                target_L = np.concatenate([target_pose_L, target_rotvec_L])
+                # target_L = np.concatenate([target_pose_L, target_rotvec_L])
                 target_R = np.concatenate([target_pose_R, target_rotvec_R])
-                target_joint_L = servoJ(doosan_robot, latest_joint_L, target_L)
+                # target_joint_L = servoJ(doosan_robot, latest_joint_L, target_L)
                 target_joint_R = servoJ(doosan_robot, latest_joint_R, target_R)
 
                 # 토픽발사
                 # print("[DEBUG] target_joint:",target_joint_L*180/np.pi, target_joint_R*180/np.pi)
-                node.joint_command_publish_L(target_joint_L)
+                # node.joint_command_publish_L(target_joint_L)
                 node.joint_command_publish_R(target_joint_R)
-                node.hand_command_publish(np.concatenate([target_hand_L, target_hand_R]))   
+                node.hand_command_publish(np.concatenate([target_hand_R]))   
 
                 # trajectory 확인용
                 # node.tcp_pose_publish_L(target_pose_L)
 
                 # current state
-                curr_joint_L = latest_joint_L
+                # curr_joint_L = latest_joint_L
                 curr_joint_R = latest_joint_R
-                curr_hand_L = latest_hand_L
+                # curr_hand_L = latest_hand_L
                 curr_hand_R = latest_hand_R
 
-                curr_tcp_L = doosan_robot.fkine(curr_joint_L)
+                # curr_tcp_L = doosan_robot.fkine(curr_joint_L)
                 curr_tcp_R = doosan_robot.fkine(curr_joint_R)
 
-                curr_tcp_pose_L = curr_tcp_L.t
+                # curr_tcp_pose_L = curr_tcp_L.t
                 curr_tcp_pose_R = curr_tcp_R.t
-                curr_tcp_rotmat_L = curr_tcp_L.R
+                # curr_tcp_rotmat_L = curr_tcp_L.R
                 curr_tcp_rotmat_R = curr_tcp_R.R
                     
-                curr_tcp_quat_L = R.from_matrix(curr_tcp_rotmat_L).as_quat()
+                # curr_tcp_quat_L = R.from_matrix(curr_tcp_rotmat_L).as_quat()
                 curr_tcp_quat_R = R.from_matrix(curr_tcp_rotmat_R).as_quat()
                     
-                if curr_tcp_quat_L[3] < 0:
-                    curr_tcp_quat_L = -curr_tcp_quat_L
+                # if curr_tcp_quat_L[3] < 0:
+                #     curr_tcp_quat_L = -curr_tcp_quat_L
                 if curr_tcp_quat_R[3] < 0:
                     curr_tcp_quat_R = -curr_tcp_quat_R
                 
-                curr_tcp_rotvec_L = R.from_quat(curr_tcp_quat_L).as_rotvec()
+                # curr_tcp_rotvec_L = R.from_quat(curr_tcp_quat_L).as_rotvec()
                 curr_tcp_rotvec_R = R.from_quat(curr_tcp_quat_R).as_rotvec()
                 # print("[DEBUG] curr_tcp_quat_L:", curr_tcp_rotvec_L)
                 # print("[DEBUG] curr_tcp_quat_R:", curr_tcp_rotvec_R)
                 # curr_pose = np.concatenate([curr_tcp_pose_L, curr_tcp_rotvec_L, curr_tcp_pose_R, curr_tcp_rotvec_R])
+                
+                curr_wrench_wrist_R = latest_wrench_wrist_R
+                curr_wrench_index_R = latest_wrench_index_R
+                curr_wrench_middle_R = latest_wrench_middle_R
+                curr_wrench_ring_R = latest_wrench_ring_R
 
                 # 현재 State 저장
                 # update robot state; ringbuffer에 state 저장
                 state = dict()
 
                 for key in self.receive_keys:
-                    if key == 'robot_pose_L':
-                        state[key] = np.array(curr_tcp_pose_L)
-                    elif key == 'robot_pose_R':
+                    # if key == 'robot_pose_L':
+                    #     state[key] = np.array(curr_tcp_pose_L)
+                    if key == 'robot_pose_R':
                         state[key] = np.array(curr_tcp_pose_R)
-                    elif key == 'robot_quat_L':
-                        state[key] = np.array(curr_tcp_quat_L)
+                    # elif key == 'robot_quat_L':
+                        # state[key] = np.array(curr_tcp_quat_L)
                     elif key == 'robot_quat_R':
                         state[key] = np.array(curr_tcp_quat_R)
-                    elif key == 'hand_pose_L':
-                        state[key] = np.array(curr_hand_L)
+                    # elif key == 'hand_pose_L':
+                        # state[key] = np.array(curr_hand_L)
                     elif key == 'hand_pose_R':
                         state[key] = np.array(curr_hand_R)
+                    elif key == 'wrench_wrist_R':
+                        state[key] = np.array(curr_wrench_wrist_R)
+                    elif key == 'wrench_index_R':
+                        state[key] = np.array(curr_wrench_index_R)
+                    elif key == 'wrench_middle_R':
+                        state[key] = np.array(curr_wrench_middle_R)
+                    elif key == 'wrench_ring_R':
+                        state[key] = np.array(curr_wrench_ring_R)
                         
                 state['robot_receive_timestamp'] = time.time()
                 self.ring_buffer.put(state)   
@@ -623,23 +684,20 @@ class DualarmInterpolationController(mp.Process):
                             
                     # 이걸로 제어 (n_cmd 1개씩 제어)
                     elif cmd == Command.SCHEDULE_WAYPOINT.value:
-                        target_pose = command['target_pose']   # abs; (pose_L, rot6d_L, pose_R, rot6d_R)
+                        target_pose = command['target_pose']   # abs; (pose_R, rot6d_R, hand_R)
                         # print('[DEBUG] target_pose:', target_pose[:18])
-                        target_position_L = target_pose[:3]   # 3d position, m
-                        target_position_R = target_pose[9:12]   # 3d position, m
-                        target_rotvec_L = rot6d_to_rotvec(target_pose[3:9])   # 6d rotation -> rot_vec
-                        target_rotvec_R = rot6d_to_rotvec(target_pose[12:18])   # 6d rotation -> rot_vec
-                        target_hand_L = target_pose[18:25]
-                        target_hand_R = target_pose[25:32]
+                        target_position_R = target_pose[0:3]   # 3d position, m
+                        target_rotvec_R = rot6d_to_rotvec(target_pose[3:9])   # 6d rotation -> rot_vec
+                        target_hand_R = target_pose[9:15]
 
-                        target_pose = np.concatenate([target_position_L, target_rotvec_L, target_position_R, target_rotvec_R,
-                                                      target_hand_L, target_hand_R])   # (32,)
+                        target_pose = np.concatenate([target_position_R, target_rotvec_R, target_hand_R])   # (15,)
 
-                        if cmd_index < 6:
-                            node.tcp_pose_publish_L(target_position_L)
-                        cmd_index += 1
-                        if cmd_index == 14:
-                            cmd_index = 0
+
+                        # if cmd_index < 6:
+                        #     node.tcp_pose_publish_L(target_position_L)
+                        # cmd_index += 1
+                        # if cmd_index == 14:
+                        #     cmd_index = 0
 
                         # print('[DEBUG] target_pose', target_pose)
                         
@@ -654,7 +712,8 @@ class DualarmInterpolationController(mp.Process):
                             max_rot_speed=self.max_rot_speed,
                             curr_time=curr_time,
                             last_waypoint_time=last_waypoint_time,
-                            action_type='dualarm_hand7'
+
+                            action_type='rightarm_hand6'
                         )
                         last_waypoint_time = target_time
                     else:
