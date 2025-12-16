@@ -91,7 +91,7 @@ class PoseTrajectoryInterpolator:
         if self.single_step:
             return self._times
         else:
-            return self.pos_interp_L.x   # times
+            return self.pos_interp_R.x   # times
     
     @property
     def poses(self) -> np.ndarray:

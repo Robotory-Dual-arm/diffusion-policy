@@ -69,7 +69,7 @@ def se3_to_pos_rotvec(T: SE3):
 
 # current_joint: rad / target_pose: m, rad
 def servoJ(robot, current_joint, target_pose, acc_pos_limit=40.0, acc_rot_limit=5.0):   # target_pose : rot_vec
-    
+
     current_pose = robot.fkine(current_joint)   # SE3
 
     pos     = np.array(target_pose[:3])   # m
@@ -101,7 +101,7 @@ def servoJ(robot, current_joint, target_pose, acc_pos_limit=40.0, acc_rot_limit=
     
     if np.linalg.norm(dq[3:]) > acc_rot_limit:
         dq[3:] *= acc_rot_limit / np.linalg.norm(dq[3:])
-    
+
     next_joint = current_joint + dq * 0.5
     return next_joint   # rad
 
@@ -111,8 +111,9 @@ class Dualarm(Node):
         super().__init__('dualarm_node')
         self.callback_group = ReentrantCallbackGroup()
 
-        self.joint_name = [f"left_joint_{i}" for i in range(1,7)] + \
-                            [f"right_joint_{i}" for i in range(1,7)]
+        # self.joint_name = [f"left_joint_{i}" for i in range(1,7)] + \
+        #                     [f"right_joint_{i}" for i in range(1,7)]
+        self.joint_name = [f"right_joint_{i}" for i in range(1,7)]
         
         self.hand_name = [f"left_thumb_joint{i}" for i in range(1,4)] + \
                          [f"left_index_joint{i}" for i in range(1,4)] + \
@@ -130,24 +131,24 @@ class Dualarm(Node):
             JointState,
             '/joint_states',
             self.joint_callback,
-            10,
-            callback_group=self.callback_group
+            10
+            # callback_group=self.callback_group
         )
         # 오른손 wrench wrist
         self.wrench_wrist_R_subscriber = self.create_subscription(
             WrenchStamped,
             '/aft_sensor1/wrench',
             self.wrench_wrist_R_callback,
-            10,
-            callback_group=self.callback_group
+            10
+            # callback_group=self.callback_group
         )
         # 오른손 wrench finger
         self.wrench_hand_R_subscriber = self.create_subscription(
             MultiDOFJointState,
             '/right_ft_sensor_broadcaster/wrench',
             self.wrench_hand_R_callback,
-            10,
-            callback_group=self.callback_group
+            10
+            # callback_group=self.callback_group
         )
 
 
@@ -175,16 +176,16 @@ class Dualarm(Node):
         # )
 
     def joint_callback(self, msg):
-        global latest_joint_L, latest_joint_R, latest_hand_L, latest_hand_R
+        global latest_joint_R, latest_hand_R
     
         joint_mapping = {n: p for n, p in zip(msg.name, msg.position)}
         joint_position = [joint_mapping.get(j) for j in self.joint_name]
         hand_position = [joint_mapping.get(j) for j in self.hand_name]
-
+        # print("[DEBUG] joint_position callbackback:", joint_position)
         # latest_joint_L = joint_position[:6]
-        latest_joint_R = joint_position[6:]
+        latest_joint_R = joint_position[:]
         # latest_hand_L = hand_position[0:3] + hand_position[4:6] + hand_position[7:9]
-        latest_hand_R = hand_position[15:18] + hand_position[20:21] + hand_position[23:24] + hand_position[26:27]
+        latest_hand_R = hand_position[15:18] + hand_position[19:20] + hand_position[22:23] + hand_position[25:26]
     
     # def wrench_wrist_L_callback(self, msg):
     #     global latest_wrench_wrist_L
@@ -199,16 +200,16 @@ class Dualarm(Node):
             msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z
         ])
     def wrench_hand_R_callback(self, msg):
-        global latest_wrench_thumb, latest_wrench_index, latest_wrench_middle, latest_wrench_ring, latest_wrench_baby
+        global latest_wrench_thumb_R, latest_wrench_index_R, latest_wrench_middle_R, latest_wrench_ring_R, latest_wrench_baby_R
         forces = [np.array([msg.wrench[i].force.x, msg.wrench[i].force.y, msg.wrench[i].force.z,
                             msg.wrench[i].torque.x, msg.wrench[i].torque.y, msg.wrench[i].torque.z
                            ]) for i in range(5)]
-        
-        latest_wrench_thumb = forces[0] # 안씀
-        latest_wrench_index = forces[1][2:3] # z축 힘만 사용
-        latest_wrench_middle = forces[2][2:3] # z축 힘만 사용
-        latest_wrench_ring = forces[3][2:3] # z축 힘만 사용
-        latest_wrench_baby = forces[4] # 안씀
+
+        latest_wrench_thumb_R = forces[0] # 안씀
+        latest_wrench_index_R = forces[1][2:3] # z축 힘만 사용
+        latest_wrench_middle_R = forces[2][2:3] # z축 힘만 사용
+        latest_wrench_ring_R = forces[3][2:3] # z축 힘만 사용
+        latest_wrench_baby_R = forces[4] # 안씀
 
     # def joint_command_publish_L(self, joint_position):
     #     msg = JointState()
@@ -347,7 +348,7 @@ class DualarmInterpolationController(mp.Process):
                 # 'robot_quat_L',
                 'robot_quat_R',
                 # 'hand_pose_L',
-                'hand_pose_R'
+                'hand_pose_R',
                 'wrench_wrist_R',
                 'wrench_index_R',
                 'wrench_middle_R',
@@ -503,6 +504,7 @@ class DualarmInterpolationController(mp.Process):
             curr_hand_R = latest_hand_R
 
             # curr_tcp_L = doosan_robot.fkine(curr_joint_L)
+            print("[DEBUG] curr_joint_R:", curr_joint_R)
             curr_tcp_R = doosan_robot.fkine(curr_joint_R)
 
             # curr_tcp_pose_L = curr_tcp_L.t
@@ -685,13 +687,13 @@ class DualarmInterpolationController(mp.Process):
                     # 이걸로 제어 (n_cmd 1개씩 제어)
                     elif cmd == Command.SCHEDULE_WAYPOINT.value:
                         target_pose = command['target_pose']   # abs; (pose_R, rot6d_R, hand_R)
-                        # print('[DEBUG] target_pose:', target_pose[:18])
+
                         target_position_R = target_pose[0:3]   # 3d position, m
                         target_rotvec_R = rot6d_to_rotvec(target_pose[3:9])   # 6d rotation -> rot_vec
                         target_hand_R = target_pose[9:15]
 
                         target_pose = np.concatenate([target_position_R, target_rotvec_R, target_hand_R])   # (15,)
-
+                        print("[DEBUG] target_pose: ", target_pose)
 
                         # if cmd_index < 6:
                         #     node.tcp_pose_publish_L(target_position_L)
