@@ -1,7 +1,7 @@
 #!/home/vision/anaconda3/envs/robodiff/bin/python
 
 # 실행코드
-# python bae_eval_real_robot_dualarm_hand.py --input data/outputs/doll_in_box_251014/checkpoints/epoch=1150-train_loss=0.001.ckpt --output data/results
+# python bae_eval_real_robot_rightarm_hand_wrench.py --input data/outputs/251214_erase_board/checkpoints/epoch=1000-train_loss=0.001.ckpt --output data/results
 """
 Usage:
 (robodiff)$ python eval_real_robot.py -i <ckpt_path> -o <save_dir> --robot_ip <ip_of_ur5>
@@ -37,7 +37,7 @@ import pathlib
 import skvideo.io
 from omegaconf import OmegaConf
 import scipy.spatial.transform as st
-from diffusion_policy.real_world.bae_real_env_dualarm_hand import DualarmRealEnv   # 새로 만듬
+from diffusion_policy.real_world.bae_real_env_rightarm_hand_with_wrench import DualarmRealEnv   # 새로 만듬
 from diffusion_policy.common.precise_sleep import precise_wait
 from diffusion_policy.real_world.real_inference_util import (
     get_real_obs_resolution, 
@@ -163,11 +163,14 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                 # 받은 obs에서 image 정규화 및 다듬기, pose 다듬기
                 obs_dict_np = get_real_obs_dict(
                     env_obs=obs, shape_meta=cfg.task.shape_meta)
+                
                 # shape_meta 계층구조는 유지하면서 np --> tensor로 변환, 텐서 배치차원 추가
                 obs_dict = dict_apply(obs_dict_np, 
                     lambda x: torch.from_numpy(x).unsqueeze(0).to(device))
+                
                 # obs로 action 예측
                 result = policy.predict_action(obs_dict)   # {'action': ~ , 'action_pred': ~}
+
                 # 실제 실행할 action trajectory
                 action = result['action'][0].detach().to('cpu').numpy()   # [0]은 배치차원 제거, tensor --> np
                 assert action.shape[-1] == 15   # action 차원에 맞게 바꿔주기
@@ -211,12 +214,14 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                                 env_obs=obs, shape_meta=cfg.task.shape_meta)
                             obs_dict = dict_apply(obs_dict_np, 
                                 lambda x: torch.from_numpy(x).unsqueeze(0).to(device))
+                            
+                            # print("obsbosbosbosb:", obs_dict)
                             # action 예측 
                             result = policy.predict_action(obs_dict)
                             # this action starts from the first obs step
                             action = result['action'][0].detach().to('cpu').numpy()   # 실행할 action[Horizon, Action_Dim]
                             print('Inference latency:', time.time() - s)
-                            # print("action.shape", action.shape)
+                            # print("action이다 ::::::", action)
 
                         # convert policy action to env actions
                         if delta_action:   # False
@@ -250,8 +255,8 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                         #   1           2              3      4      5      6      7         8         9     10    11    12    13    14    15 16
                         # -0.1    obs_timestamp      +0.1   +0.2   +0.3   +0.4   +0.5      +0.6
                         #                                                        -0.1  obs_timestamp  +0.1  +0.2  +0.3  +0.4  +0.5  +0.6
-                        print("Current time:", curr_time)
-                        print("Action timestamps:", action_timestamps)
+                        # print("Current time:", curr_time)
+                        # print("Action timestamps:", action_timestamps)
                         ############################################
                         
                         if np.sum(is_new) == 0:   # 전부 지나버림
@@ -268,10 +273,9 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                             this_target_poses = this_target_poses[is_new]#[:6]
                             action_timestamps = action_timestamps[is_new]#[:6]
 
-                        
+                        # print('[DEBUGDEBUG] this_target_poses :', this_target_poses)
                         # execute actions; 실제 action 실행부분; 
                         # print("[TIME] exec_actions 발사 시간: ", time.monotonic()%100, time.time()%10)
-                        print('[DEBUG] Before exec_actions')
                         env.exec_actions(
                             actions=this_target_poses,
                             timestamps=action_timestamps
