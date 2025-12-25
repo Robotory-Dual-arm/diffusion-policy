@@ -317,12 +317,6 @@ class DualarmRealEnv:
                 this_idx = is_before_idxs[-1]
             this_idxs.append(this_idx)
 
-        # robot_obs_raw = {
-        # 'robot_eef_pos': ~ ,
-        # 'robot_eef_quat': ~ ,
-        # 'robot_gripper_qpos': ~ 
-        # }
-
         robot_obs_raw = dict()
         for k, v in last_robot_data.items():
             if k in self.obs_key_map:
@@ -362,7 +356,6 @@ class DualarmRealEnv:
         # convert action to pose
         receive_time = time.time()
         is_new = timestamps > receive_time
-        # print("[DEBUG] is_new2: ", is_new)
         new_actions = actions[is_new]
         new_timestamps = timestamps[is_new]
         new_stages = stages[is_new]
