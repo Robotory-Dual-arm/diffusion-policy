@@ -5,7 +5,7 @@ import time
 import shutil
 import math
 from multiprocessing.managers import SharedMemoryManager
-from diffusion_policy.real_world.rightarm_hand_with_wrench_interpolation_controller import DualarmInterpolationController # 듀얼암 + 핸드
+from diffusion_policy.real_world.rightarm_hand_without_wrench_interpolation_controller import DualarmInterpolationController # 듀얼암 + 핸드
 from diffusion_policy.real_world.multi_realsense import MultiRealsense, SingleRealsense
 from diffusion_policy.real_world.video_recorder import VideoRecorder
 from diffusion_policy.common.timestamp_accumulator import (
