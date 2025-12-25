@@ -169,11 +169,11 @@ class Dualarm(Node):
         )
         
         # trajectory 확인용
-        # self.tcp_publisher_L = self.create_publisher(
-        #     PoseStamped,
-        #     '/TCP_target_pose_L',
-        #     10
-        # )
+        self.tcp_publisher_R = self.create_publisher(
+            PoseStamped,
+            '/TCP_target_pose_R',
+            10
+        )
 
     def joint_callback(self, msg):
         global latest_joint_R, latest_hand_R
@@ -238,14 +238,14 @@ class Dualarm(Node):
         # print("[DEBUG] hand command published:", msg.position)
 
     # trajectory 확인용
-    # def tcp_pose_publish_L(self, tcp_pose):
-    #     msg = PoseStamped()
-    #     msg.header.stamp = self.get_clock().now().to_msg()
-    #     msg.pose.position.x = float(tcp_pose[0])
-    #     msg.pose.position.y = float(tcp_pose[1])
-    #     msg.pose.position.z = float(tcp_pose[2])
+    def tcp_pose_publish_R(self, tcp_pose):
+        msg = PoseStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.pose.position.x = float(tcp_pose[0])
+        msg.pose.position.y = float(tcp_pose[1])
+        msg.pose.position.z = float(tcp_pose[2])
         
-    #     self.tcp_publisher_L.publish(msg)
+        self.tcp_publisher_R.publish(msg)
 
 class Command(enum.Enum):
     STOP = 0
@@ -576,7 +576,7 @@ class DualarmInterpolationController(mp.Process):
                 node.hand_command_publish(np.concatenate([target_hand_R]))   
 
                 # trajectory 확인용
-                # node.tcp_pose_publish_L(target_pose_L)
+                # node.tcp_pose_publish_R(target_pose_R)
 
                 # current state
                 # curr_joint_L = latest_joint_L
@@ -695,11 +695,11 @@ class DualarmInterpolationController(mp.Process):
                         target_pose = np.concatenate([target_position_R, target_rotvec_R, target_hand_R])   # (15,)
                         print("[DEBUG] target_pose: ", target_pose)
 
-                        # if cmd_index < 6:
-                        #     node.tcp_pose_publish_L(target_position_L)
-                        # cmd_index += 1
-                        # if cmd_index == 14:
-                        #     cmd_index = 0
+                        if cmd_index < 12:
+                            node.tcp_pose_publish_R(target_position_R)
+                        cmd_index += 1
+                        if cmd_index == 14:
+                            cmd_index = 0
 
                         # print('[DEBUG] target_pose', target_pose)
                         
