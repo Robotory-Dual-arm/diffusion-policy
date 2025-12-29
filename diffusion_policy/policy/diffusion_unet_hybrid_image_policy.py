@@ -139,7 +139,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         obs_feature_dim = obs_encoder.output_shape()[0]
         input_dim = action_dim + obs_feature_dim
         global_cond_dim = None
-        if obs_as_global_cond:
+        if obs_as_global_cond:   # True
             input_dim = action_dim
             global_cond_dim = obs_feature_dim * n_obs_steps
 

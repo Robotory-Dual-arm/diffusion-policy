@@ -10,7 +10,7 @@ normalize_util.py  ->  robomimic_abs_action_only_dual_arm_normalizer_from_stat()
 
 === Rollout ===
 eval_real_robot.py  ->  따로 만들기, 액션 차원 맞추기, import 설정
-real_world.real_env.py  ->  DEFAULT_OBS_KEY_MAP
+real_world.real_env.py  ->  따로 만들기, DEFAULT_OBS_KEY_MAP, import 설정
 
 real_world.interpolation_controller.py  ->  따로 만들기, sub, pub, receive_keys, 액션 차원 맞추기, action_type
 pose_trajectory_inperpolator.py  ->  액션 차원 맞추기
@@ -20,3 +20,6 @@ pose_trajectory_inperpolator.py  ->  액션 차원 맞추기
 
 === 이미지 augmentation ===
 diffusion_unet_hybrid_image_policy.py  ->  compute_loss()
+
+
+

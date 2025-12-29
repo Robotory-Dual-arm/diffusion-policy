@@ -516,7 +516,7 @@ class DualarmInterpolationController(mp.Process):
             pose_interp = PoseTrajectoryInterpolator(  
                 times=[curr_t],     # [ time ]
                 poses=[curr_pose],  # [ [x,y,z,rx,ry,rz] ]
-                action_type='rightarm_hand6'
+                action_type='rightarm_hand'
             )
 
             iter_idx = 0
@@ -686,7 +686,7 @@ class DualarmInterpolationController(mp.Process):
                             curr_time=curr_time,
                             last_waypoint_time=last_waypoint_time,
 
-                            action_type='rightarm_hand6'
+                            action_type='rightarm_hand'
                         )
                         last_waypoint_time = target_time
                     else:
