@@ -16,7 +16,7 @@ class ConditionalResidualBlock1D(nn.Module):
             in_channels, 
             out_channels, 
             cond_dim,
-            kernel_size=3,
+            kernel_size=3,   # 5
             n_groups=8,
             cond_predict_scale=False):
         super().__init__()
@@ -29,11 +29,11 @@ class ConditionalResidualBlock1D(nn.Module):
         # FiLM modulation https://arxiv.org/abs/1709.07871
         # predicts per-channel scale and bias
         cond_channels = out_channels
-        if cond_predict_scale:
+        if cond_predict_scale:   # True
             cond_channels = out_channels * 2
         self.cond_predict_scale = cond_predict_scale
         self.out_channels = out_channels
-        self.cond_encoder = nn.Sequential(
+        self.cond_encoder = nn.Sequential(   # FiLM: cond -> (scale, bias)
             nn.Mish(),
             nn.Linear(cond_dim, cond_channels),
             Rearrange('batch t -> batch t 1'),
@@ -68,7 +68,7 @@ class ConditionalResidualBlock1D(nn.Module):
 # conditional U-Net -> FiLM
 class ConditionalUnet1D(nn.Module):
     def __init__(self, 
-        input_dim,   # action + obs feature 의 dimension
+        input_dim,   # action dim 
         local_cond_dim=None,
         global_cond_dim=None,
         diffusion_step_embed_dim=256,
@@ -78,23 +78,23 @@ class ConditionalUnet1D(nn.Module):
         cond_predict_scale=False
         ):
         super().__init__()
-        all_dims = [input_dim] + list(down_dims)
+        all_dims = [input_dim] + list(down_dims)   # [in, 256, 512, 1024]
         start_dim = down_dims[0]
 
         # diffusion step 임베딩
-        dsed = diffusion_step_embed_dim
-        diffusion_step_encoder = nn.Sequential(
-            SinusoidalPosEmb(dsed),
-            nn.Linear(dsed, dsed * 4),
-            nn.Mish(),
-            nn.Linear(dsed * 4, dsed),
+        dsed = diffusion_step_embed_dim   # 128 
+        diffusion_step_encoder = nn.Sequential(   # 128 -> 512 -> 128
+            SinusoidalPosEmb(dsed),      
+            nn.Linear(dsed, dsed * 4),   # 128 -> 512
+            nn.Mish(),                   # activation
+            nn.Linear(dsed * 4, dsed),   # 512 -> 128
         )
         cond_dim = dsed
         # condition dim = diffusion step dim + obs feature dim
         if global_cond_dim is not None:
-            cond_dim += global_cond_dim
-        # [(in, 256), (256, 512), (512, 1024)]
-        in_out = list(zip(all_dims[:-1], all_dims[1:]))
+            cond_dim += global_cond_dim    # step_dim + obs_feature_dim
+        
+        in_out = list(zip(all_dims[:-1], all_dims[1:])) # [(in, 256), (256, 512), (512, 1024)]
 
         local_cond_encoder = None
         if local_cond_dim is not None:   # False
@@ -112,8 +112,10 @@ class ConditionalUnet1D(nn.Module):
                     kernel_size=kernel_size, n_groups=n_groups,
                     cond_predict_scale=cond_predict_scale)
             ])
+
+        ### mid, down, up 
         # (1024, 1024)
-        mid_dim = all_dims[-1]
+        mid_dim = all_dims[-1]   # 1024
         self.mid_modules = nn.ModuleList([
             ConditionalResidualBlock1D(   
                 mid_dim, mid_dim, cond_dim=cond_dim,
@@ -126,35 +128,36 @@ class ConditionalUnet1D(nn.Module):
                 cond_predict_scale=cond_predict_scale
             ),
         ])
-        # (in, 256) (256, 512) (512, 1024)
+        # [{(in, 256), (256, 256), (downsample)}, {(256, 512), (512, 512), (downsample)}, {(512, 1024), (1024, 1024), (Identity)}]
         down_modules = nn.ModuleList([])
         for ind, (dim_in, dim_out) in enumerate(in_out):
             is_last = ind >= (len(in_out) - 1)
             down_modules.append(nn.ModuleList([
-                ConditionalResidualBlock1D(
+                ConditionalResidualBlock1D(                               # resnet1
                     dim_in, dim_out, cond_dim=cond_dim, 
                     kernel_size=kernel_size, n_groups=n_groups,
                     cond_predict_scale=cond_predict_scale),
-                ConditionalResidualBlock1D(
+                ConditionalResidualBlock1D(                               # resnet2 
                     dim_out, dim_out, cond_dim=cond_dim, 
                     kernel_size=kernel_size, n_groups=n_groups,
                     cond_predict_scale=cond_predict_scale),
-                Downsample1d(dim_out) if not is_last else nn.Identity()
+                Downsample1d(dim_out) if not is_last else nn.Identity()   # downsample
             ]))
+        # [{(1024, 512), (512, 512), (upsample)}, {(512, 256), (256, 256), (upsample)}, {(256, in), (in, in), (Identity)}]
         # (2048, 512) (1024, 256) skipped connection 때문에 dim_out*2
         up_modules = nn.ModuleList([])
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out[1:])):
             is_last = ind >= (len(in_out) - 1)
             up_modules.append(nn.ModuleList([
-                ConditionalResidualBlock1D(
+                ConditionalResidualBlock1D(                               # resnet1
                     dim_out*2, dim_in, cond_dim=cond_dim,
                     kernel_size=kernel_size, n_groups=n_groups,
                     cond_predict_scale=cond_predict_scale),
-                ConditionalResidualBlock1D(
+                ConditionalResidualBlock1D(                               # resnet2
                     dim_in, dim_in, cond_dim=cond_dim,
                     kernel_size=kernel_size, n_groups=n_groups,
                     cond_predict_scale=cond_predict_scale),
-                Upsample1d(dim_in) if not is_last else nn.Identity()
+                Upsample1d(dim_in) if not is_last else nn.Identity()      # upsample
             ]))
         # (256, 256) (256, in)
         final_conv = nn.Sequential(
@@ -204,7 +207,7 @@ class ConditionalUnet1D(nn.Module):
         
         # encode local features
         h_local = list()
-        if local_cond is not None:
+        if local_cond is not None:   # None
             local_cond = einops.rearrange(local_cond, 'b h t -> b t h')
             resnet, resnet2 = self.local_cond_encoder
             x = resnet(local_cond, global_feature)

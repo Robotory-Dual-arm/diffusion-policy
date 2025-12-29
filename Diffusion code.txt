@@ -20,3 +20,6 @@ pose_trajectory_inperpolator.py  ->  액션 차원 맞추기
 
 === 이미지 augmentation ===
 diffusion_unet_hybrid_image_policy.py  ->  compute_loss()
+
+
+

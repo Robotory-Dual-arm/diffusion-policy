@@ -1,8 +1,7 @@
-name: bae_dualarm_erase_board_without_wrench
+name: bae_dualarm_erase_board_with_wrench
 
 image_shape: [3, 240, 320]
-#dataset_path: data/baetae/251210/force_diffusion_data.hdf5
-dataset_path: data/force_diffusion_data.hdf5
+dataset_path: data/baetae/251210/force_diffusion_data.hdf5
 
 shape_meta: &shape_meta
   obs:
@@ -30,9 +29,9 @@ shape_meta: &shape_meta
     hand_pose_R:
       shape: [6]
       type: low_dim
-    #wrench_wrist_R:
-    #  shape: [6]
-    #  type: low_dim
+    wrench_wrist_R:
+      shape: [6]
+      type: low_dim
     #wrench_thumb_R:
     #  shape: [1]
     #  type: low_dim
