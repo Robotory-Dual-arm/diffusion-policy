@@ -32,8 +32,8 @@ class PoseTrajectoryInterpolator:
 
         if action_type == 'dualarm_hand7': # total dim = 26
             self.dualarm_hand7 = True # dualarm[posL(3), rotL(3), posR(3), rotR(3)] + hand[thumb(3), index(2), middle(2)]*2
-        elif action_type == 'rightarm_hand': # total dim = 12
-            self.rightarm_hand = True # rightarm[posR(3), rotR(3)] + hand[]
+        elif action_type == 'rightarm_hand': # total dim = 12 or 13
+            self.rightarm_hand = True # rightarm[posR(3), rotR(3)] + hand[rest]
         # action_type == None -> total dim = 12 (dualarm without hand)
         #                dualarm[posL(3), rotL(3), posR(3), rotR(3)]
 
@@ -106,7 +106,7 @@ class PoseTrajectoryInterpolator:
             n = len(self.times)
             
             poses = np.zeros((n, self.action_dim))
-            
+
             if self.dualarm_hand7:
                 poses[:,:3] = self.pos_interp_L.y
                 poses[:,3:6] = self.rot_interp_L(self.times).as_rotvec()
