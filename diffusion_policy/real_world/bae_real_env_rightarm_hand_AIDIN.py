@@ -375,7 +375,7 @@ class DualarmRealEnv:
                 pose=new_actions[i],
                 target_time=new_timestamps[i]
             )
-        
+
         # record actions; Accumulator 사용
         if self.action_accumulator is not None:
             self.action_accumulator.put(
@@ -387,7 +387,6 @@ class DualarmRealEnv:
                 new_stages,
                 new_timestamps
             )
-    
     
     def get_robot_state(self):
         return self.robot.get_state()

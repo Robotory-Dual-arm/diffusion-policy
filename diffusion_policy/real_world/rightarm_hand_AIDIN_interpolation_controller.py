@@ -102,7 +102,7 @@ def servoJ(robot, current_joint, target_pose, acc_pos_limit=40.0, acc_rot_limit=
     if np.linalg.norm(dq[3:]) > acc_rot_limit:
         dq[3:] *= acc_rot_limit / np.linalg.norm(dq[3:])
 
-    next_joint = current_joint + dq * 0.5
+    next_joint = current_joint + dq * 0.35
     return next_joint   # rad
 
 
@@ -183,7 +183,7 @@ class Dualarm(Node):
         hand_position = [joint_mapping.get(j) for j in self.hand_name]
         # print("[DEBUG] joint_position callbackback:", joint_position)
         # latest_joint_L = joint_position[:6]
-        latest_joint_R = joint_position[:]
+        latest_joint_R = joint_position[6:]
         # latest_hand_L = hand_position[0:3] + hand_position[4:6] + hand_position[7:9]
         latest_hand_R = hand_position[15:18] + hand_position[19:21] + hand_position[22:24]
     
@@ -330,7 +330,7 @@ class DualarmInterpolationController(mp.Process):
         example = {
             'cmd': Command.SERVOL.value,
             # 'target_pose': np.zeros((6,), dtype=np.float64),
-            'target_pose': np.zeros((15,), dtype=np.float64),
+            'target_pose': np.zeros((16,), dtype=np.float64),
             'duration': 0.0,
             'target_time': 0.0
         }
@@ -438,7 +438,8 @@ class DualarmInterpolationController(mp.Process):
         assert target_time > time.time()
         pose = np.array(pose)
         # assert pose.shape == (6,)
-        assert pose.shape == (15,)   
+        print('pose', pose.shape)
+        assert pose.shape == (16,)   
 
         message = {
             'cmd': Command.SCHEDULE_WAYPOINT.value,
