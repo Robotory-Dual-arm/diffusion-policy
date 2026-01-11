@@ -1,7 +1,7 @@
 #!/home/vision/anaconda3/envs/robodiff/bin/python
 
 # 실행코드
-# python bae_eval_real_robot_rightarm_hand(aidin).py --input data/outputs/251225_erase_board/checkpoints/epoch=1000-train_loss=0.001.ckpt --output data/results
+# python bae_eval_real_robot_rightarm_hand_AIDIN.py --input data/outputs/251225_erase_board/checkpoints/epoch=1000-train_loss=0.001.ckpt --output data/results
 """
 Usage:
 (robodiff)$ python eval_real_robot.py -i <ckpt_path> -o <save_dir> --robot_ip <ip_of_ur5>
@@ -73,7 +73,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
     cfg = payload['cfg']   # yaml에 있던 변수들 설정값
     
     # Head = 242422304502, Front = 336222070518, Left = 218622276386, Right = 126122270712
-    serial_numbers = ['????????????', '???????????'] # head, front
+    serial_numbers = ['244222071747', '239222302551'] # head, front
     use_pigdm = False
     if use_pigdm == True:
         cfg._target_ = 'diffusion_policy.workspace.bae_train_diffusion_unet_hybrid_pigdm_workspace.TrainDiffusionUnetHybridPigdmWorkspace'
