@@ -32,11 +32,11 @@ class TransformerForDiffusion(ModuleAttrMixin):
         
         T = horizon
         T_cond = 1
-        if not time_as_cond:
+        if not time_as_cond: # False
             T += 1
             T_cond -= 1
         obs_as_cond = cond_dim > 0
-        if obs_as_cond:
+        if obs_as_cond: # True
             assert time_as_cond
             T_cond += n_obs_steps
 
@@ -56,9 +56,9 @@ class TransformerForDiffusion(ModuleAttrMixin):
         self.encoder = None
         self.decoder = None
         encoder_only = False
-        if T_cond > 0:
+        if T_cond > 0: # True
             self.cond_pos_emb = nn.Parameter(torch.zeros(1, T_cond, n_emb))
-            if n_cond_layers > 0:
+            if n_cond_layers > 0: # 0 
                 encoder_layer = nn.TransformerEncoderLayer(
                     d_model=n_emb,
                     nhead=n_head,
@@ -68,12 +68,12 @@ class TransformerForDiffusion(ModuleAttrMixin):
                     batch_first=True,
                     norm_first=True
                 )
-                self.encoder = nn.TransformerEncoder(
+                self.encoder = nn.TransformerEncoder( # encoder가 Transformer
                     encoder_layer=encoder_layer,
                     num_layers=n_cond_layers
                 )
             else:
-                self.encoder = nn.Sequential(
+                self.encoder = nn.Sequential( # encoder가 MLP
                     nn.Linear(n_emb, 4 * n_emb),
                     nn.Mish(),
                     nn.Linear(4 * n_emb, n_emb)
@@ -111,7 +111,7 @@ class TransformerForDiffusion(ModuleAttrMixin):
             )
 
         # attention mask
-        if causal_attn:
+        if causal_attn: # True
             # causal mask to ensure that attention is only applied to the left in the input sequence
             # torch.nn.Transformer uses additive mask as opposed to multiplicative mask in minGPT
             # therefore, the upper triangle should be -inf and others (including diag) should be 0.
@@ -267,7 +267,7 @@ class TransformerForDiffusion(ModuleAttrMixin):
         )
         return optimizer
 
-    def forward(self, 
+    def forward(self,   # model_output = model(trajectory, t, cond)로 호출
         sample: torch.Tensor, 
         timestep: Union[torch.Tensor, float, int], 
         cond: Optional[torch.Tensor]=None, **kwargs):
@@ -292,7 +292,7 @@ class TransformerForDiffusion(ModuleAttrMixin):
         # process input
         input_emb = self.input_emb(sample)
 
-        if self.encoder_only:
+        if self.encoder_only: # False
             # BERT
             token_embeddings = torch.cat([time_emb, input_emb], dim=1)
             t = token_embeddings.shape[1]
@@ -307,17 +307,17 @@ class TransformerForDiffusion(ModuleAttrMixin):
             # (B,T,n_emb)
         else:
             # encoder
-            cond_embeddings = time_emb
-            if self.obs_as_cond:
-                cond_obs_emb = self.cond_obs_emb(cond)
+            cond_embeddings = time_emb # timestep emb
+            if self.obs_as_cond: # True
+                cond_obs_emb = self.cond_obs_emb(cond) # cond가 nobs_features 
                 # (B,To,n_emb)
-                cond_embeddings = torch.cat([cond_embeddings, cond_obs_emb], dim=1)
+                cond_embeddings = torch.cat([cond_embeddings, cond_obs_emb], dim=1) # timestep + obs emb
             tc = cond_embeddings.shape[1]
             position_embeddings = self.cond_pos_emb[
                 :, :tc, :
             ]  # each position maps to a (learnable) vector
             x = self.drop(cond_embeddings + position_embeddings)
-            x = self.encoder(x)
+            x = self.encoder(x) # MLP or Transformer
             memory = x
             # (B,T_cond,n_emb)
             

@@ -137,7 +137,7 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         obs_feature_dim = obs_encoder.output_shape()[0]
         input_dim = action_dim if obs_as_cond else (obs_feature_dim + action_dim)
         output_dim = input_dim
-        cond_dim = obs_feature_dim if obs_as_cond else 0
+        cond_dim = obs_feature_dim if obs_as_cond else 0 # True
 
         model = TransformerForDiffusion(
             input_dim=input_dim,

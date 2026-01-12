@@ -1,7 +1,7 @@
-name: bae_dualarm_erase_board_with_wrench
+name: bae_dualarm_erase_board_with_wrench_only_wrist
 
 image_shape: [3, 240, 320]
-dataset_path: data/baetae/251210/force_diffusion_data.hdf5
+dataset_path: data/baetae/251231/diffusion_data_force_only_wrist_251231.hdf5
 
 shape_meta: &shape_meta
   obs:
