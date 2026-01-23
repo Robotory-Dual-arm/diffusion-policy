@@ -135,6 +135,8 @@ class SequenceSampler:
             = self.indices[idx]
         result = dict()
         for key in self.keys:
+            if self.ignore_rgb_is_applied and 'image' in key:
+                continue
             input_arr = self.replay_buffer[key]
             # performance optimization, avoid small allocation if possible
             if key not in self.key_first_k:
@@ -163,3 +165,6 @@ class SequenceSampler:
                 data[sample_start_idx:sample_end_idx] = sample
             result[key] = data
         return result
+
+    def ignore_rgb(self, apply=True):
+        self.ignore_rgb_is_applied = apply

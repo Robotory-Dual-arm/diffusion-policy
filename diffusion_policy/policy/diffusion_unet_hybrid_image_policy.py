@@ -302,7 +302,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         assert 'valid_mask' not in batch
 
         # 이미지 augmentation!!!!!!!!!!!!!!!
-        transform = T.Compose([T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.03),
+        transform = T.Compose([T.ColorJitter(brightness=0.3, contrast=0.4, saturation=0.4, hue=0.07),
                                T.RandomGrayscale(p=0.005)])
         num_image = len([key for key in batch['obs'].keys() if 'image' in key])
         for i in range(num_image):
