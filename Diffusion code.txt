@@ -16,10 +16,25 @@ real_world.interpolation_controller.py  ->  따로 만들기, sub, pub, receive_
 pose_trajectory_inperpolator.py  ->  액션 차원 맞추기
 
 
-
+=== PIGDM ===
+workspace_pigdm.py
+policy_pigdm.py
+scheduling_ddim_pigdm.py
 
 === 이미지 augmentation ===
 diffusion_unet_hybrid_image_policy.py  ->  compute_loss()
 
 
-
+=== Relative action ===
+==Train==
+sampler.py  ignore_rgb 추가
+normalize_util.py  concatenate_normalizer 추가
+pose_util.py 생성
+pose_repr_util.py 생성
+rotation_transformer_rel.py 생성  -> rotation_6d가 0,1행 사용 (내 이전 데이터는 0,1열 사용;;)
+config -> pose_repr: ${task.pose_repr}
+config.task -> abs_action = False
+               pose_repr (obs_pose_repr, action_pose_repr) -> 'relative' or 'abs'
+               dataset.__target__ 변경
+               rotation -> raw_shape, shape, rotation_rep
+               data.pose_repr: *pose_repr

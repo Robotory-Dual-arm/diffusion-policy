@@ -210,15 +210,6 @@ class RobomimicReplayImageDataset(BaseImageDataset):
             obs_dict[key] = np.moveaxis(data[key][T_slice],-1,1
                 ).astype(np.float32) / 255.
             # T,C,H,W
-            # print('data[key][T_slice]', data[key][T_slice])
-            # print('obs_dict[key]', np.moveaxis(data[key][T_slice],-1,1
-            #     ).astype(np.float32) / 255.)
-            # print('shape', obs_dict[key].shape)
-            # print('key:', key)
-            # print('obs_dict[image0].shape:', obs_dict[key].shape)
-            # breakpoint()
-
-
             del data[key]
         for key in self.lowdim_keys:
             obs_dict[key] = data[key][T_slice].astype(np.float32)
@@ -230,10 +221,10 @@ class RobomimicReplayImageDataset(BaseImageDataset):
         }
         return torch_data
 
-
+# Action이 axis_angle 일때 rotation_6d로 변환
 def _convert_actions(raw_actions, abs_action, rotation_transformer):
-    actions = raw_actions
-    # if abs_action:
+    # actions = raw_actions
+    # if abs_action:   
     #     is_dual_arm = False
     #     if raw_actions.shape[-1] == 14:
     #         # dual arm
@@ -251,9 +242,10 @@ def _convert_actions(raw_actions, abs_action, rotation_transformer):
     #     if is_dual_arm:
     #         raw_actions = raw_actions.reshape(-1,20)
     #     actions = raw_actions
+    actions = raw_actions.astype(np.float32)
     return actions
 
-
+# hdf5 -> zarr
 def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, rotation_transformer, 
         n_workers=None, max_inflight_tasks=None):
     if n_workers is None:

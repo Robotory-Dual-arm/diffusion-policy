@@ -1,6 +1,7 @@
 from diffusion_policy.model.common.normalizer import SingleFieldLinearNormalizer
 from diffusion_policy.common.pytorch_util import dict_apply, dict_apply_reduce, dict_apply_split
 import numpy as np
+import torch
 
 
 def get_range_normalizer_from_stat(stat, output_max=1, output_min=-1, range_eps=1e-7):
@@ -272,3 +273,15 @@ def array_to_stats(arr: np.ndarray):
         'std': np.std(arr, axis=0)
     }
     return stat
+
+def concatenate_normalizer(normalizers: list):
+    scale = torch.cat([normalizer.params_dict['scale'] for normalizer in normalizers], dim=-1)
+    offset = torch.cat([normalizer.params_dict['offset'] for normalizer in normalizers], dim=-1)
+    input_stats_dict = dict_apply_reduce(
+        [normalizer.params_dict['input_stats'] for normalizer in normalizers], 
+        lambda x: torch.cat(x, dim=-1))
+    return SingleFieldLinearNormalizer.create_manual(
+        scale=scale,
+        offset=offset,
+        input_stats_dict=input_stats_dict
+    )

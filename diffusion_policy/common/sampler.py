@@ -12,8 +12,8 @@ def create_indices(
     debug:bool=True) -> np.ndarray:
     assert episode_mask.shape == episode_ends.shape      
     # 0 < pad < sequence_length  
-    pad_before = min(max(pad_before, 0), sequence_length-1)
-    pad_after = min(max(pad_after, 0), sequence_length-1)
+    pad_before = min(max(pad_before, 0), sequence_length-1)   # {n_obs - 1}
+    pad_after = min(max(pad_after, 0), sequence_length-1)   # {n_action - 1}
 
     indices = list()
     for i in range(len(episode_ends)):
@@ -29,7 +29,7 @@ def create_indices(
         # episode 길이
         episode_length = end_idx - start_idx
         
-        # episode_length : 실제 episode 길이 / sequence_length : 학습할때 episode 길이
+        # episode_length : 실제 episode 길이 / sequence_length : horizon
         min_start = -pad_before 
         max_start = episode_length - sequence_length + pad_after 
         
@@ -86,7 +86,7 @@ def downsample_mask(mask, max_n, seed=0):
 class SequenceSampler:
     def __init__(self, 
         replay_buffer: ReplayBuffer, 
-        sequence_length:int,
+        sequence_length:int,   # horizon
         pad_before:int=0,
         pad_after:int=0,
         keys=None,
@@ -126,6 +126,8 @@ class SequenceSampler:
         self.sequence_length = sequence_length
         self.replay_buffer = replay_buffer
         self.key_first_k = key_first_k
+
+        self.ignore_rgb_is_applied = False
     
     def __len__(self):
         return len(self.indices)
@@ -135,6 +137,8 @@ class SequenceSampler:
             = self.indices[idx]
         result = dict()
         for key in self.keys:
+            if self.ignore_rgb_is_applied and 'image' in key:
+                continue
             input_arr = self.replay_buffer[key]
             # performance optimization, avoid small allocation if possible
             if key not in self.key_first_k:
@@ -163,3 +167,6 @@ class SequenceSampler:
                 data[sample_start_idx:sample_end_idx] = sample
             result[key] = data
         return result
+
+    def ignore_rgb(self, apply=True):
+        self.ignore_rgb_is_applied = apply

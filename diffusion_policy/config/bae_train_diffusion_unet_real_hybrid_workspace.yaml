@@ -51,6 +51,8 @@ policy:
   cond_predict_scale: True
   obs_encoder_group_norm: True
   eval_fixed_crop: True
+  
+  pose_repr: ${task.pose_repr}
 
   # scheduler.step params
   # predict_epsilon: True
@@ -64,15 +66,15 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  batch_size: 16
+  batch_size: 32
   num_workers: 16
   shuffle: True
   pin_memory: True
   persistent_workers: True
 
 val_dataloader:
-  batch_size: 16
-  num_workers: 16
+  batch_size: 1
+  num_workers: 1
   shuffle: False
   pin_memory: True
   persistent_workers: True
