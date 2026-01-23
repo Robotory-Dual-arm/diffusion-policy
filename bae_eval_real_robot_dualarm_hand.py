@@ -41,7 +41,9 @@ from diffusion_policy.real_world.bae_real_env_dualarm_hand import DualarmRealEnv
 from diffusion_policy.common.precise_sleep import precise_wait
 from diffusion_policy.real_world.real_inference_util import (
     get_real_obs_resolution, 
-    get_real_obs_dict)
+    get_real_obs_dict,
+    get_real_relative_obs_dict,
+    get_real_action_from_relative)
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
@@ -121,6 +123,14 @@ def main(input, output, robot_ip, match_dataset, match_episode,
     print("action_offset:", action_offset)   # action 지연 실행 (0)
 
 
+    # =============== relative ==================
+    # 있으면 'relative' or 'abs' / 없으면 None
+    obs_pose_repr = OmegaConf.select(cfg, "task.pose_repr.obs_pose_repr", default=None)
+    action_pose_repr = OmegaConf.select(cfg, "task.pose_repr.action_pose_repr", default=None)
+
+    # ===========================================
+
+
     # sharedmemory에 데이터들 쌓기; 같은 공유 공간 사용
     with SharedMemoryManager() as shm_manager:
         with DualarmRealEnv(
@@ -142,13 +152,6 @@ def main(input, output, robot_ip, match_dataset, match_episode,
             cv2.setNumThreads(1)
 
 
-            # Realsense-viewer에서 설정
-            # Should be the same as demo
-            # realsense exposure
-            # env.realsense.set_exposure(exposure=120, gain=0)
-            # realsense white balance
-            # env.realsense.set_white_balance(white_balance=5900)
-
             print("Waiting for realsense")
             time.sleep(1.0)
 
@@ -161,16 +164,28 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                 policy.reset()
 
                 # 받은 obs에서 image 정규화 및 다듬기, pose 다듬기
-                obs_dict_np = get_real_obs_dict(
-                    env_obs=obs, shape_meta=cfg.task.shape_meta)
+
+                # Obs: relative or abs 
+                if obs_pose_repr == 'relative':
+                    obs_dict_np = get_real_relative_obs_dict(
+                        env_obs=obs, shape_meta=cfg.task.shape_meta)
+                else:
+                    obs_dict_np = get_real_obs_dict(
+                        env_obs=obs, shape_meta=cfg.task.shape_meta)
+                
+                for key in obs_dict_np.keys():
+                    print(f"{key}: {obs_dict_np[key].shape}, {obs_dict_np[key].dtype}")
+
                 # shape_meta 계층구조는 유지하면서 np --> tensor로 변환, 텐서 배치차원 추가
                 obs_dict = dict_apply(obs_dict_np, 
                     lambda x: torch.from_numpy(x).unsqueeze(0).to(device))
+                
                 # obs로 action 예측
                 result = policy.predict_action(obs_dict)   # {'action': ~ , 'action_pred': ~}
+
                 # 실제 실행할 action trajectory
                 action = result['action'][0].detach().to('cpu').numpy()   # [0]은 배치차원 제거, tensor --> np
-                assert action.shape[-1] == 32   # action 차원에 맞게 바꿔주기
+                assert action.shape[-1] == cfg.task.shape_meta.action.shape[0]
                 del result
             np.set_printoptions(suppress=True, floatmode="fixed", precision=11)
             print('Ready!')
@@ -207,16 +222,28 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                         # run inference; action 예측
                         with torch.no_grad():
                             s = time.time()
-                            obs_dict_np = get_real_obs_dict(
-                                env_obs=obs, shape_meta=cfg.task.shape_meta)
+
+                            # Obs: relative or abs
+                            if obs_pose_repr == 'relative':
+                                obs_dict_np = get_real_relative_obs_dict(
+                                    env_obs=obs, shape_meta=cfg.task.shape_meta)
+                            else:
+                                obs_dict_np = get_real_obs_dict(
+                                    env_obs=obs, shape_meta=cfg.task.shape_meta)
+
                             obs_dict = dict_apply(obs_dict_np, 
                                 lambda x: torch.from_numpy(x).unsqueeze(0).to(device))
+                            
                             # action 예측 
                             result = policy.predict_action(obs_dict)
                             # this action starts from the first obs step
                             action = result['action'][0].detach().to('cpu').numpy()   # 실행할 action[Horizon, Action_Dim]
+                            
+                            # Action: relative or abs
+                            if action_pose_repr == 'relative':
+                                action = get_real_action_from_relative(action=action,env_obs=obs)
+
                             print('Inference latency:', time.time() - s)
-                            # print("action.shape", action.shape)
 
                         # convert policy action to env actions
                         if delta_action:   # False
@@ -230,8 +257,6 @@ def main(input, output, robot_ip, match_dataset, match_episode,
 
                         else:   # len(action): Horizon / len(target_pose): 9
                             this_target_poses = np.zeros((len(action), action.shape[-1]), dtype=np.float64)
-                            # this_target_poses[:] = target_pose
-                            # this_target_poses[:,[0,1]] = action   
                             this_target_poses[:, :action.shape[-1]] = action
 
                         # deal with timing
@@ -242,7 +267,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                         curr_time = time.time()
                         is_new = action_timestamps > (curr_time + action_exec_latency)   # 현재시점 이후 action만 실행
                         # print("[DEBUG] action_timestamps: ", np.array(action_timestamps)%10)
-                        print("[DEBUG] is_new: ", is_new)
+                        # print("[DEBUG] is_new: ", is_new)
 
                         ############################################ timestamp
                         # while문은 6 * 0.1 주기로 무조건 돌음
@@ -250,8 +275,8 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                         #   1           2              3      4      5      6      7         8         9     10    11    12    13    14    15 16
                         # -0.1    obs_timestamp      +0.1   +0.2   +0.3   +0.4   +0.5      +0.6
                         #                                                        -0.1  obs_timestamp  +0.1  +0.2  +0.3  +0.4  +0.5  +0.6
-                        print("Current time:", curr_time)
-                        print("Action timestamps:", action_timestamps)
+                        # print("Current time:", curr_time)
+                        # print("Action timestamps:", action_timestamps)
                         ############################################
                         
                         if np.sum(is_new) == 0:   # 전부 지나버림
@@ -268,18 +293,11 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                             this_target_poses = this_target_poses[is_new]#[:6]
                             action_timestamps = action_timestamps[is_new]#[:6]
 
-                        
-                        # execute actions; 실제 action 실행부분; 
-                        # print("[TIME] exec_actions 발사 시간: ", time.monotonic()%100, time.time()%10)
-                        print('[DEBUG] Before exec_actions')
                         env.exec_actions(
                             actions=this_target_poses,
                             timestamps=action_timestamps
                         )
                         print(f"Submitted {len(this_target_poses)} steps of actions.")
-                        # print("[TIME] exec_actions time:", time.monotonic())
-                        # print("[TIME] action_timestamps:", action_timestamps)
-                        # print("[DEBUG]: target pose", this_target_poses)
 
 
                         # 's' 누르면 종료
