@@ -1,7 +1,8 @@
-name: bae_dualarm_doll_in_box_rel
+name: bae_dualarm_erase_board_without_wrench
 
 image_shape: [3, 240, 320]
-dataset_path: data/baetae/251010/diffusion_doll_in_box_251010.hdf5
+dataset_path: data/baetae/251210/force_diffusion_data.hdf5
+# dataset_path: data/force_diffusion_data.hdf5
 
 # relative 
 low_dim_obs_horizon: 2
@@ -22,17 +23,17 @@ shape_meta: &shape_meta
       type: rgb
       horizon: ${task.img_obs_horizon}
       
-    robot_pose_L:
-      shape: [3]
-      type: low_dim
-      horizon: ${task.low_dim_obs_horizon}
+    # robot_pose_L:
+    #   shape: [3]
+    #   type: low_dim
+    #   horizon: ${task.low_dim_obs_horizon}
       
-    robot_quat_L:
+    # robot_quat_L:
       # raw_shape: [4]
-      shape: [4]
-      type: low_dim
-      horizon: ${task.low_dim_obs_horizon}
-      rotation_rep: rotation_6d
+    #   shape: [4]
+    #   type: low_dim
+    #   horizon: ${task.low_dim_obs_horizon}
+    #   rotation_rep: rotation_6d
       
     robot_pose_R:
       shape: [3]
@@ -46,21 +47,20 @@ shape_meta: &shape_meta
       horizon: ${task.low_dim_obs_horizon}
       rotation_rep: rotation_6d
       
-    hand_pose_L:
-      shape: [7]
-      type: low_dim
-      horizon: ${task.low_dim_obs_horizon}
+    # hand_pose_L:
+    #   shape: [7]
+    #   type: low_dim
+    #   horizon: ${task.low_dim_obs_horizon}
       
     hand_pose_R:
-      shape: [7]
+      shape: [6]
       type: low_dim
       horizon: ${task.low_dim_obs_horizon}
     
   action: 
-    shape: [32] # robot_pose_L[3] + robot_rot6d_L[6] + robot_pose_R[3] + robot_rot6d_R[6] + hand_pose_L[7] + hand_pose_R[7]
+    shape: [15] # robot_pose_R[3] + robot_rot6d_R[6] + hand_pose_R[6]
     horizon: ${task.action_horizon}
     rotation_rep: rotation_6d
-
 
 pose_repr: &pose_repr
   obs_pose_repr: abs # abs or relative
