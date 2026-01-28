@@ -1,4 +1,4 @@
-name: bae_dualarm_doll_in_box_rel
+name: bae_dualarm_doll_in_box_relative
 
 image_shape: [3, 240, 320]
 dataset_path: data/baetae/251010/diffusion_doll_in_box_251010.hdf5

@@ -159,20 +159,10 @@ class BimanualRobomimicReplayDataset(BaseImageDataset):
             to_rep=shape_meta['action']['rotation_rep'])
         
 
-        self.use_left_arm = False
-        self.use_right_arm = False
-        self.use_left_hand = False
-        self.use_right_hand = False
-
-        for key in self.lowdim_keys:
-            if 'robot_pose' in key and 'L' in key:
-                self.use_left_arm = True
-            if 'robot_pose' in key and 'R' in key:
-                self.use_right_arm = True
-            if 'hand_pose' in key and 'L' in key:
-                self.use_left_hand = True
-            if 'hand_pose' in key and 'R' in key:
-                self.use_right_hand = True
+        self.use_left_arm = 'robot_pose_L' in self.lowdim_keys
+        self.use_right_arm = 'robot_pose_R' in self.lowdim_keys
+        self.use_left_hand = 'hand_pose_L' in self.lowdim_keys
+        self.use_right_hand = 'hand_pose_R' in self.lowdim_keys
 
 
     def get_validation_dataset(self):

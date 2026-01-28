@@ -11,7 +11,7 @@ def compute_relative_pose(pos, rot, base_pos, base_rot_mat,
                           delta=False):
     if not backward:
         # forward pass
-        if not delta:
+        if not delta:   # 이걸로 relative data 만듬
             output_pos = pos if base_pos is None else pos - base_pos
             output_rot = rot_transformer_to_target.forward(
                 rot_transformer_to_mat.forward(rot) @ np.linalg.inv(base_rot_mat))
