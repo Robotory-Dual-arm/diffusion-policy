@@ -33,4 +33,5 @@ config.task -> abs_action = False
                pose_repr (obs_pose_repr, action_pose_repr) -> 'relative' or 'abs'
                dataset.__target__ 변경
                rotation -> raw_shape, shape, rotation_rep
+               data.pose_repr: *pose_repr
 

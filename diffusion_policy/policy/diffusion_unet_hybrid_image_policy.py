@@ -38,6 +38,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             cond_predict_scale=True,
             obs_encoder_group_norm=False,
             eval_fixed_crop=False,
+            pose_repr: dict={},
             # parameters passed to step
             **kwargs):
         super().__init__()
@@ -54,9 +55,18 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             'depth': [],
             'scan': []
         }
+
+        self.obs_pose_repr = pose_repr.get('obs_pose_repr', 'abs')
+        self.action_pose_repr = pose_repr.get('action_pose_repr', 'abs')
+
         obs_key_shapes = dict()
         for key, attr in obs_shape_meta.items():
             shape = attr['shape']
+
+            # obs relative시에 quat -> rot6d
+            if self.obs_pose_repr == 'relative' and 'quat' in key:
+                shape = (6,)
+
             obs_key_shapes[key] = list(shape)
             # type을 확인하고 있으면 그걸로, 없으면 기본값 'low_dim'으로
             type = attr.get('type', 'low_dim')

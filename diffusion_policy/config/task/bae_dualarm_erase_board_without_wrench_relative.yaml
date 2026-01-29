@@ -71,7 +71,7 @@ env_runner:
   _target_: diffusion_policy.env_runner.real_pusht_image_runner.RealPushTImageRunner
 
 dataset:
-  _target_: diffusion_policy.dataset.bae_robomimic_replay_image_dataset.BimanualRobomimicReplayDataset
+  _target_: diffusion_policy.dataset.bae_robomimic_replay_image_dataset.BaeRobomimicReplayDataset
   shape_meta: *shape_meta
   dataset_path: ${task.dataset_path}
   horizon: ${horizon}
@@ -85,5 +85,5 @@ dataset:
   val_ratio: 0.00
   # max_train_episodes: null
   # delta_action: False
-  
+  pose_repr: *pose_repr
   # abs_action: True

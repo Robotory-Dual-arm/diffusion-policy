@@ -1,7 +1,7 @@
-name: bae_dualarm_doll_in_box_relative
+name: bae_dualarm_doll_in_box
 
 image_shape: [3, 240, 320]
-dataset_path: data/baetae/251010/diffusion_doll_in_box_251010.hdf5
+dataset_path: data/baetae/251103/diffusion_doll_in_box_251103.hdf5
 
 # relative 
 low_dim_obs_horizon: 2
@@ -12,23 +12,22 @@ ignore_proprioception: False
 
 shape_meta: &shape_meta
   obs:
-    image0:   # Head camera 242422304502
+    image0:   # Left camera
       shape: [3, 240, 320]
       type: rgb
       horizon: ${task.img_obs_horizon}
       
-    image1:   # Front camera 336222070518
+    image1:   # Right camera
       shape: [3, 240, 320]
       type: rgb
       horizon: ${task.img_obs_horizon}
-      
+
     robot_pose_L:
       shape: [3]
       type: low_dim
       horizon: ${task.low_dim_obs_horizon}
       
     robot_quat_L:
-      # raw_shape: [4]
       shape: [4]
       type: low_dim
       horizon: ${task.low_dim_obs_horizon}
@@ -40,7 +39,6 @@ shape_meta: &shape_meta
       horizon: ${task.low_dim_obs_horizon}
       
     robot_quat_R:
-      # raw_shape: [4]
       shape: [4]
       type: low_dim
       horizon: ${task.low_dim_obs_horizon}
@@ -64,7 +62,7 @@ shape_meta: &shape_meta
 
 pose_repr: &pose_repr
   obs_pose_repr: abs # abs or relative
-  action_pose_repr: relative # abs or relative or delta
+  action_pose_repr: abs # abs or relative or delta
   
   
 env_runner:

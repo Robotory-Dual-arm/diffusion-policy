@@ -9,6 +9,8 @@ import shutil
 import copy
 import json
 import hashlib
+import scipy.spatial.transform as st
+
 from filelock import FileLock
 from threadpoolctl import threadpool_limits
 import concurrent.futures
@@ -30,11 +32,12 @@ from diffusion_policy.common.normalize_util import (
     array_to_stats,
     concatenate_normalizer
 )
-from diffusion_policy.common.pose_repr_util import compute_relative_pose, compute_hand_relative_pose
+from diffusion_policy.common.pose_repr_util import compute_hand_relative_pose, convert_pose_mat_rep
 register_codecs()
+from diffusion_policy.model.common.pose_util import pose_to_mat, mat_to_pose10d, pose10d_to_mat
 
 
-class BimanualRobomimicReplayDataset(BaseImageDataset):
+class BaeRobomimicReplayDataset(BaseImageDataset):
     def __init__(self,
             shape_meta: dict,
             dataset_path: str,
@@ -142,6 +145,7 @@ class BimanualRobomimicReplayDataset(BaseImageDataset):
         self.pose_repr = pose_repr 
         self.obs_pose_repr = self.pose_repr.get('obs_pose_repr', 'abs') 
         self.action_pose_repr = self.pose_repr.get('action_pose_repr', 'abs') 
+        
 
         # Rotation transformers for bimanual setup
         self.quat2mat = RotationTransformer(from_rep='quaternion', to_rep='matrix')
@@ -163,6 +167,7 @@ class BimanualRobomimicReplayDataset(BaseImageDataset):
         self.use_right_arm = 'robot_pose_R' in self.lowdim_keys
         self.use_left_hand = 'hand_pose_L' in self.lowdim_keys
         self.use_right_hand = 'hand_pose_R' in self.lowdim_keys
+        
 
 
     def get_validation_dataset(self):
@@ -189,6 +194,9 @@ class BimanualRobomimicReplayDataset(BaseImageDataset):
             num_workers=32,
         )
         for batch in tqdm(dataloader, desc='iterating dataset to get normalization'): # 여기서 __getitem__ 호출 -> sampler.sequence 뭐시기 실행
+            # for key in self.lowdim_keys:
+            #     print("[DEBUG] batch['obs'][key].shape:", batch['obs'][key].shape)
+            # breakpoint()
             for key in self.lowdim_keys:
                 data_cache[key].append(copy.deepcopy(batch['obs'][key]))
             data_cache['action'].append(copy.deepcopy(batch['action']))
@@ -312,47 +320,79 @@ class BimanualRobomimicReplayDataset(BaseImageDataset):
         # Obs & Action --> 'relative' or 'abs' 
 
         # Obs -> 'relative' or 'abs'
+        # if self.use_left_arm:
+        #     current_pose_L = copy.copy(obs_dict['robot_pose_L'][-1])
+        #     current_rot_mat_L = copy.copy(self.quat2mat.forward(obs_dict['robot_quat_L'][-1]))
+        #     if self.obs_pose_repr == 'relative':
+        #         obs_dict['robot_pose_L'], obs_dict['robot_quat_L'] = compute_relative_pose(
+        #             pos=obs_dict['robot_pose_L'],
+        #             rot=obs_dict['robot_quat_L'],
+        #             base_pos=current_pose_L,
+        #             base_rot_mat=current_rot_mat_L,
+        #             rot_transformer_to_mat=self.quat2mat,
+        #             rot_transformer_to_target=self.rot_mat2target.get('robot_quat_L', self.quat2mat))
+        #         obs_dict['robot_pose_L'] = obs_dict['robot_pose_L'].astype(np.float32)
+        #         obs_dict['robot_quat_L'] = obs_dict['robot_quat_L'].astype(np.float32)
+        # if self.use_right_arm:
+        #     current_pose_R = copy.copy(obs_dict['robot_pose_R'][-1])
+        #     current_rot_mat_R = copy.copy(self.quat2mat.forward(obs_dict['robot_quat_R'][-1]))
+        #     if self.obs_pose_repr == 'relative':
+        #         obs_dict['robot_pose_R'], obs_dict['robot_quat_R'] = compute_relative_pose(
+        #                 pos=obs_dict['robot_pose_R'],
+        #                 rot=obs_dict['robot_quat_R'],
+        #                 base_pos=current_pose_R,
+        #                 base_rot_mat=current_rot_mat_R,
+        #                 rot_transformer_to_mat=self.quat2mat,
+        #                 rot_transformer_to_target=self.rot_mat2target.get('robot_quat_R', self.quat2mat))
+        #         obs_dict['robot_pose_R'] = obs_dict['robot_pose_R'].astype(np.float32)
+        #         obs_dict['robot_quat_R'] = obs_dict['robot_quat_R'].astype(np.float32)
+
+
         if self.use_left_arm:
-            current_pose_L = copy.copy(obs_dict['robot_pose_L'][-1])
-            current_rot_mat_L = copy.copy(self.quat2mat.forward(obs_dict['robot_quat_L'][-1]))
+            obs_pose_mat_L = pose_to_mat(np.concatenate([
+                obs_dict['robot_pose_L'],
+                st.Rotation.from_quat(obs_dict['robot_quat_L']).as_rotvec()
+            ], axis=-1)) 
+
             if self.obs_pose_repr == 'relative':
-                obs_dict['robot_pose_L'], obs_dict['robot_quat_L'] = compute_relative_pose(
-                    pos=obs_dict['robot_pose_L'],
-                    rot=obs_dict['robot_quat_L'],
-                    base_pos=current_pose_L,
-                    base_rot_mat=current_rot_mat_L,
-                    rot_transformer_to_mat=self.quat2mat,
-                    rot_transformer_to_target=self.rot_mat2target.get('robot_quat_L', self.quat2mat))
-                obs_dict['robot_pose_L'] = obs_dict['robot_pose_L'].astype(np.float32)
-                obs_dict['robot_quat_L'] = obs_dict['robot_quat_L'].astype(np.float32)
- 
+                obs_relative_pose_mat_L = convert_pose_mat_rep(
+                    pose_mat=obs_pose_mat_L,
+                    base_pose_mat=obs_pose_mat_L[-1],
+                    pose_rep=self.obs_pose_repr,
+                    backward=False)
+                
+                obs_relative_pose_L = mat_to_pose10d(obs_relative_pose_mat_L) # mat -> pos + rot6d (9)
+                obs_dict['robot_pose_L'] = obs_relative_pose_L[..., :3].astype(np.float32)
+                obs_dict['robot_quat_L'] = obs_relative_pose_L[..., 3:].astype(np.float32)
+
         if self.use_right_arm:
-            current_pose_R = copy.copy(obs_dict['robot_pose_R'][-1])
-            current_rot_mat_R = copy.copy(self.quat2mat.forward(obs_dict['robot_quat_R'][-1]))
+            obs_pose_mat_R = pose_to_mat(np.concatenate([
+                obs_dict['robot_pose_R'],
+                st.Rotation.from_quat(obs_dict['robot_quat_R']).as_rotvec()
+            ], axis=-1))
+
             if self.obs_pose_repr == 'relative':
-                obs_dict['robot_pose_R'], obs_dict['robot_quat_R'] = compute_relative_pose(
-                        pos=obs_dict['robot_pose_R'],
-                        rot=obs_dict['robot_quat_R'],
-                        base_pos=current_pose_R,
-                        base_rot_mat=current_rot_mat_R,
-                        rot_transformer_to_mat=self.quat2mat,
-                        rot_transformer_to_target=self.rot_mat2target.get('robot_quat_R', self.quat2mat))
-                obs_dict['robot_pose_R'] = obs_dict['robot_pose_R'].astype(np.float32)
-                obs_dict['robot_quat_R'] = obs_dict['robot_quat_R'].astype(np.float32)
+                obs_relative_pose_mat_R = convert_pose_mat_rep(
+                    pose_mat=obs_pose_mat_R,
+                    base_pose_mat=obs_pose_mat_R[-1],
+                    pose_rep=self.obs_pose_repr,
+                    backward=False)
+                
+                obs_relative_pose_R = mat_to_pose10d(obs_relative_pose_mat_R) # mat -> pos + rot6d (9)
+                obs_dict['robot_pose_R'] = obs_relative_pose_R[..., :3].astype(np.float32)
+                obs_dict['robot_quat_R'] = obs_relative_pose_R[..., 3:].astype(np.float32)
 
         if self.use_left_hand:
-            current_hand_pose_L = copy.copy(obs_dict['hand_pose_L'][-1])
             if self.obs_pose_repr == 'relative':
                 obs_dict['hand_pose_L'] = compute_hand_relative_pose(
                     pos=obs_dict['hand_pose_L'],
-                    base_pos=current_hand_pose_L)
+                    base_pos=obs_dict['hand_pose_L'][-1]).astype(np.float32)
             
         if self.use_right_hand:
-            current_hand_pose_R = copy.copy(obs_dict['hand_pose_R'][-1])
             if self.obs_pose_repr == 'relative':
                 obs_dict['hand_pose_R'] = compute_hand_relative_pose(
                     pos=obs_dict['hand_pose_R'],
-                    base_pos=current_hand_pose_R)
+                    base_pos=obs_dict['hand_pose_R'][-1]).astype(np.float32)
 
 
         # Action -> 'relative' or 'abs'
@@ -360,62 +400,81 @@ class BimanualRobomimicReplayDataset(BaseImageDataset):
             relative_action_list = list()
             action_index = 0 
 
+            # if self.use_left_arm:
+            #     left_action_pos, left_action_rot = compute_relative_pose(
+            #         pos=data['action'][..., action_index:action_index+3],
+            #         rot=data['action'][..., action_index+3:action_index+9],
+            #         base_pos=current_pose_L,
+            #         base_rot_mat=current_rot_mat_L,
+            #         rot_transformer_to_mat=self.rot6d2mat,
+            #         rot_transformer_to_target=self.rot_mat2target['action'])
+            #     action_index += 9
+            #     relative_action_list.append(left_action_pos.astype(np.float32))
+            #     relative_action_list.append(left_action_rot.astype(np.float32)) 
+            # if self.use_right_arm:
+            #     right_action_pos, right_action_rot = compute_relative_pose(
+            #         pos=data['action'][..., action_index:action_index+3],
+            #         rot=data['action'][..., action_index+3:action_index+9],
+            #         base_pos=current_pose_R,
+            #         base_rot_mat=current_rot_mat_R,
+            #         rot_transformer_to_mat=self.rot6d2mat,
+            #         rot_transformer_to_target=self.rot_mat2target['action'])
+            #     action_index += 9
+            #     relative_action_list.append(right_action_pos.astype(np.float32))
+            #     relative_action_list.append(right_action_rot.astype(np.float32))
+
             if self.use_left_arm:
-                left_action_pos, left_action_rot = compute_relative_pose(
-                    pos=data['action'][..., action_index:action_index+3],
-                    rot=data['action'][..., action_index+3:action_index+9],
-                    base_pos=current_pose_L,
-                    base_rot_mat=current_rot_mat_L,
-                    rot_transformer_to_mat=self.rot6d2mat,
-                    rot_transformer_to_target=self.rot_mat2target['action'])
+                action_relative_pose_mat_L = convert_pose_mat_rep(
+                    pose_mat=pose10d_to_mat(data['action'][..., action_index:action_index+9]), # pos + rot6d -> mat
+                    base_pose_mat=obs_pose_mat_L[-1],
+                    pose_rep=self.action_pose_repr,
+                    backward=False)
+                action_relative_pose_L = mat_to_pose10d(action_relative_pose_mat_L) # mat -> pos + rot6d (9)
+                relative_action_list.append(action_relative_pose_L.astype(np.float32))
                 action_index += 9
-                relative_action_list.append(left_action_pos.astype(np.float32))
-                relative_action_list.append(left_action_rot.astype(np.float32)) 
-            
+
             if self.use_right_arm:
-                right_action_pos, right_action_rot = compute_relative_pose(
-                    pos=data['action'][..., action_index:action_index+3],
-                    rot=data['action'][..., action_index+3:action_index+9],
-                    base_pos=current_pose_R,
-                    base_rot_mat=current_rot_mat_R,
-                    rot_transformer_to_mat=self.rot6d2mat,
-                    rot_transformer_to_target=self.rot_mat2target['action'])
+                action_relative_pose_mat_R = convert_pose_mat_rep(
+                    pose_mat=pose10d_to_mat(data['action'][..., action_index:action_index+9]), # pos + rot6d -> mat
+                    base_pose_mat=obs_pose_mat_R[-1],
+                    pose_rep=self.action_pose_repr,
+                    backward=False)
+                action_relative_pose_R = mat_to_pose10d(action_relative_pose_mat_R) # mat -> pos + rot6d (9)
+                relative_action_list.append(action_relative_pose_R.astype(np.float32))
                 action_index += 9
-                relative_action_list.append(right_action_pos.astype(np.float32))
-                relative_action_list.append(right_action_rot.astype(np.float32))
 
             hand_length = data['action'].shape[-1] - action_index
             if hand_length > 0:
                 if self.use_left_hand:
                     if self.use_right_hand:
-                        # left, right hand
-                        left_hand_action = compute_hand_relative_pose(
+                        # both hand
+                        action_relative_hand_L = compute_hand_relative_pose(
                             pos=data['action'][..., action_index:action_index + hand_length//2],
-                            base_pos=current_hand_pose_L)
-                        right_hand_action = compute_hand_relative_pose(
+                            base_pos=obs_dict['hand_pose_L'][-1])
+                        action_relative_hand_R = compute_hand_relative_pose(
                             pos=data['action'][..., action_index + hand_length//2:],
-                            base_pos=current_hand_pose_R)
-                        relative_action_list.append(left_hand_action.astype(np.float32))
-                        relative_action_list.append(right_hand_action.astype(np.float32))
+                            base_pos=obs_dict['hand_pose_R'][-1])
+                        relative_action_list.append(action_relative_hand_L.astype(np.float32))
+                        relative_action_list.append(action_relative_hand_R.astype(np.float32))
                     else:
                         # left hand
-                        left_hand_action = compute_hand_relative_pose(
+                        action_relative_hand_L = compute_hand_relative_pose(
                             pos=data['action'][..., action_index:],
-                            base_pos=current_hand_pose_L)
-                        relative_action_list.append(left_hand_action.astype(np.float32))
+                            base_pos=obs_dict['hand_pose_L'][-1])
+                        relative_action_list.append(action_relative_hand_L.astype(np.float32))
                 else:
                     # right hand
-                    right_hand_action = compute_hand_relative_pose(
+                    action_relative_hand_R = compute_hand_relative_pose(
                         pos=data['action'][..., action_index:],
-                        base_pos=current_hand_pose_R)
-                    relative_action_list.append(right_hand_action.astype(np.float32))
+                        base_pos=obs_dict['hand_pose_R'][-1])
+                    relative_action_list.append(action_relative_hand_R.astype(np.float32))
 
             data['action'] = np.concatenate(relative_action_list, axis=-1)
 
 
         torch_data = {
-            'obs': dict_apply(obs_dict, torch.from_numpy),
-            'action': torch.from_numpy(data['action'].astype(np.float32))
+            'obs': dict_apply(obs_dict, torch.from_numpy), # abs: quat(4) / relative: rot6d(6)
+            'action': torch.from_numpy(data['action'].astype(np.float32)) # pos(3), rot6d(6), hand(?)
         }
         return torch_data
 

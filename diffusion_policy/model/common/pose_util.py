@@ -90,6 +90,7 @@ def normalize(vec, eps=1e-12):
     out = (vec.T / norm).T
     return out
 
+# 0,1 열 사용
 def rot6d_to_mat(d6):
     a1, a2 = d6[..., :3], d6[..., 3:]
     b1 = normalize(a1)
@@ -99,6 +100,7 @@ def rot6d_to_mat(d6):
     out = np.stack((b1, b2, b3), axis=-1)
     return out
 
+# 0,1 열 사용
 def mat_to_rot6d(mat):
     batch_dim = mat.shape[:-2]
     out = mat[..., :, :2].swapaxes(-1, -2).copy().reshape(batch_dim + (6,))

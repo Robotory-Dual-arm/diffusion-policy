@@ -43,12 +43,11 @@ from diffusion_policy.real_world.real_inference_util import (
     get_real_obs_resolution, 
     get_real_obs_dict,
     get_real_relative_obs_dict,
-    get_real_relative_action)
+    get_real_action_from_relative)
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from diffusion_policy.common.cv2_util import get_image_transform
-from diffusion_policy.model.common.rotation_transformer_rel import RotationTransformer
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
@@ -167,9 +166,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                 # Obs: relative or abs 
                 if obs_pose_repr == 'relative' or 'rel':
                     obs_dict_np = get_real_relative_obs_dict(
-                        env_obs=obs, shape_meta=cfg.task.shape_meta,
-                        rot_quat2mat=rot_quat2mat,
-                        rot_mat2target=rot_mat2target)
+                        env_obs=obs, shape_meta=cfg.task.shape_meta)
                 else:
                     obs_dict_np = get_real_obs_dict(
                         env_obs=obs, shape_meta=cfg.task.shape_meta)
@@ -226,9 +223,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                             # Obs: relative or abs
                             if obs_pose_repr == 'relative' or 'rel':
                                 obs_dict_np = get_real_relative_obs_dict(
-                                    env_obs=obs, shape_meta=cfg.task.shape_meta,
-                                    rot_quat2mat=rot_quat2mat,
-                                    rot_mat2target=rot_mat2target)
+                                    env_obs=obs, shape_meta=cfg.task.shape_meta)
                             else:
                                 obs_dict_np = get_real_obs_dict(
                                     env_obs=obs, shape_meta=cfg.task.shape_meta)
@@ -243,13 +238,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                             
                             # Action: relative or abs
                             if action_pose_repr == 'relative' or 'rel':
-                                action = get_real_relative_action(
-                                    action=action,
-                                    env_obs=obs,
-                                    action_pose_repr='relative',
-                                    rot_quat2mat=rot_quat2mat,
-                                    rot_mat2target=rot_mat2target
-                                )
+                                action = get_real_action_from_relative(action=action,env_obs=obs)
 
                             print('Inference latency:', time.time() - s)
 
@@ -265,8 +254,6 @@ def main(input, output, robot_ip, match_dataset, match_episode,
 
                         else:   # len(action): Horizon / len(target_pose): 9
                             this_target_poses = np.zeros((len(action), action.shape[-1]), dtype=np.float64)
-                            # this_target_poses[:] = target_pose
-                            # this_target_poses[:,[0,1]] = action   
                             this_target_poses[:, :action.shape[-1]] = action
 
                         # deal with timing
@@ -276,8 +263,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                         action_exec_latency = 0.01
                         curr_time = time.time()
                         is_new = action_timestamps > (curr_time + action_exec_latency)   # 현재시점 이후 action만 실행
-                        # print("[DEBUG] action_timestamps: ", np.array(action_timestamps)%10)
-                        print("[DEBUG] is_new: ", is_new)
+
 
                         ############################################ timestamp
                         # while문은 6 * 0.1 주기로 무조건 돌음
@@ -303,17 +289,11 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                             this_target_poses = this_target_poses[is_new]#[:6]
                             action_timestamps = action_timestamps[is_new]#[:6]
 
-                        # print('[DEBUGDEBUG] this_target_poses :', this_target_poses)
-                        # execute actions; 실제 action 실행부분; 
-                        # print("[TIME] exec_actions 발사 시간: ", time.monotonic()%100, time.time()%10)
                         env.exec_actions(
                             actions=this_target_poses,
                             timestamps=action_timestamps
                         )
                         print(f"Submitted {len(this_target_poses)} steps of actions.")
-                        # print("[TIME] exec_actions time:", time.monotonic())
-                        # print("[TIME] action_timestamps:", action_timestamps)
-                        # print("[DEBUG]: target pose", this_target_poses)
 
 
                         # 's' 누르면 종료
