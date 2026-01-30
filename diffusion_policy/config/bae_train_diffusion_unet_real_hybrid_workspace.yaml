@@ -52,7 +52,7 @@ policy:
   obs_encoder_group_norm: True
   eval_fixed_crop: True
   
-  pose_repr: *pose_repr
+  pose_repr: ${task.pose_repr}
 
   # scheduler.step params
   # predict_epsilon: True
