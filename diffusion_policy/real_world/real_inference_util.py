@@ -158,7 +158,7 @@ def get_real_relative_obs_dict(
     return obs_dict_np
 
 
-def get_real_action_from_relative(
+def get_abs_action_from_relative(
         action: np.ndarray,
         env_obs: Dict[str, np.ndarray]
     ):
@@ -234,3 +234,79 @@ def get_real_action_from_relative(
     env_action = np.concatenate(env_action, axis=-1)
     return env_action
 
+# For relative PIGDM
+def get_relative_action_from_abs(
+        action: np.ndarray,
+        env_obs: Dict[str, np.ndarray]
+    ):
+    
+    env_action = list()
+
+    use_left_arm = 'robot_pose_L' in env_obs
+    use_right_arm = 'robot_pose_R' in env_obs
+    use_left_hand = 'hand_pose_L' in env_obs
+    use_right_hand = 'hand_pose_R' in env_obs
+    action_index = 0
+
+    if use_left_arm:
+        obs_pose_mat_L = pose_to_mat(np.concatenate([
+            env_obs['robot_pose_L'],
+            st.Rotation.from_quat(env_obs['robot_quat_L']).as_rotvec()
+        ], axis=-1))
+        action_abs_pose_mat_L = pose10d_to_mat(action[..., action_index:action_index+9])
+        action_pose_mat_L = convert_pose_mat_rep(
+            pose_mat=action_abs_pose_mat_L,
+            base_pose_mat=obs_pose_mat_L[-1],
+            pose_rep='relative',
+            backward=False)
+        action_pose_L = mat_to_pose10d(action_pose_mat_L)
+        env_action.append(action_pose_L) # pos + rot6d (9)
+        action_index += 9
+        
+    if use_right_arm:
+        obs_pose_mat_R = pose_to_mat(np.concatenate([
+            env_obs['robot_pose_R'],
+            st.Rotation.from_quat(env_obs['robot_quat_R']).as_rotvec()
+        ], axis=-1))
+        action_abs_pose_mat_R = pose10d_to_mat(action[..., action_index:action_index+9])
+        action_pose_mat_R = convert_pose_mat_rep(
+            pose_mat=action_abs_pose_mat_R,
+            base_pose_mat=obs_pose_mat_R[-1],
+            pose_rep='relative',
+            backward=False)
+        action_pose_R = mat_to_pose10d(action_pose_mat_R)
+        env_action.append(action_pose_R) # pos + rot6d (9)
+        action_index += 9
+    
+    hand_length = action.shape[-1] - action_index
+    if hand_length > 0:      
+        if use_left_hand:
+            if use_right_hand:
+                # both hand
+                action_hand_L = compute_hand_relative_pose(
+                    pos=action[..., action_index:action_index + hand_length//2],
+                    base_pos=env_obs['hand_pose_L'][-1],
+                    backward=False)
+                action_hand_R = compute_hand_relative_pose(
+                    pos=action[..., action_index + hand_length//2:],
+                    base_pos=env_obs['hand_pose_R'][-1],
+                    backward=False)
+                env_action.append(action_hand_L)
+                env_action.append(action_hand_R)
+            else:
+                # left_hand
+                action_hand_L = compute_hand_relative_pose(
+                    pos=action[..., action_index:],
+                    base_pos=env_obs['hand_pose_L'][-1],
+                    backward=False)
+                env_action.append(action_hand_L)
+        else:
+            # right_hand
+            action_hand_R = compute_hand_relative_pose(
+                pos=action[..., action_index:],
+                base_pos=env_obs['hand_pose_R'][-1],
+                backward=False)
+            env_action.append(action_hand_R)   
+
+    env_action = np.concatenate(env_action, axis=-1)
+    return env_action
