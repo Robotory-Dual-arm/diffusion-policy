@@ -1,4 +1,5 @@
 from typing import Dict
+import numpy as np
 import math
 import torch
 import torch.nn as nn
@@ -19,6 +20,9 @@ import robomimic.models.base_nets as rmbn
 import diffusion_policy.model.vision.crop_randomizer as dmvc
 from diffusion_policy.common.pytorch_util import dict_apply, replace_submodules
 
+import scipy.spatial.transform as st
+from diffusion_policy.model.common.pose_util import pose10d_to_mat, pose_to_mat, mat_to_pose10d
+from diffusion_policy.real_world.real_inference_util import get_abs_action_from_relative, get_relative_action_from_abs
 
 class DiffusionUnetHybridImagePigdmPolicy(BaseImagePolicy):
     def __init__(self, 
@@ -37,6 +41,8 @@ class DiffusionUnetHybridImagePigdmPolicy(BaseImagePolicy):
             cond_predict_scale=True,
             obs_encoder_group_norm=False,
             eval_fixed_crop=False,
+            # obs & action representation
+            pose_repr: dict = None,
             # parameters passed to step
             **kwargs):
         super().__init__()
@@ -173,7 +179,19 @@ class DiffusionUnetHybridImagePigdmPolicy(BaseImagePolicy):
         self.obs_as_global_cond = obs_as_global_cond
         self.kwargs = kwargs
 
+        # PIGDM
         self.prev_action = None
+        # relative PIGDM
+        self.prev_unnormalized_abs_action = None
+        self.prev_normalized_relative_action = None
+        # relative or abs
+        if pose_repr is not None:
+            self.obs_pose_repr = pose_repr.get('obs_pose_repr', 'abs')
+            self.action_pose_repr = pose_repr.get('action_pose_repr', 'abs')
+        else:
+            self.obs_pose_repr = 'abs'
+            self.action_pose_repr = 'abs'
+
 
         if num_inference_steps is None:
             num_inference_steps = noise_scheduler.config.num_train_timesteps
@@ -193,8 +211,7 @@ class DiffusionUnetHybridImagePigdmPolicy(BaseImagePolicy):
         model = self.model   # Unet
         scheduler = self.noise_scheduler
 
-        # 여기다가 requires_grad=True 설정하면 될거같은데??
-        trajectory = torch.randn(   # (B, T, Da) = (배치, horizon, action_dim)
+        trajectory = torch.randn(   # (B, T, Da) 
             size=condition_data.shape, 
             dtype=condition_data.dtype,
             device=condition_data.device,
@@ -204,44 +221,87 @@ class DiffusionUnetHybridImagePigdmPolicy(BaseImagePolicy):
         # set step values
         scheduler.set_timesteps(self.num_inference_steps)
 
-        for t in scheduler.timesteps:
+        # relative PIGDM
+        if self.action_pose_repr == 'relative':
+            # 덮어쓰기
+            if self.prev_normalized_relative_action is not None:
+                self.prev_action = self.prev_normalized_relative_action
 
-            with torch.enable_grad():
-                print(f'Denoising step {t} ====================================================')
-                # 1. apply conditioning; obs_as_global_cond=False일때 condition data 설정
-                trajectory[condition_mask] = condition_data[condition_mask]
-                trajectory.requires_grad_(True)
+            for t in scheduler.timesteps:
 
-                # 2. predict model output; noise 예측(traj랑 같은 dim)
-                model_output = model(trajectory, t, 
-                    local_cond=local_cond, global_cond=global_cond)
+                with torch.enable_grad():
 
-                # 3. compute previous image: x_t -> x_t-1
-                trajectory = scheduler.step(
-                    model_output, t, trajectory, 
-                    generator=generator, 
-                    prev_action=self.prev_action,
-                    **kwargs
-                    ).prev_sample
-                
-                trajectory = trajectory.detach()
+                    # 1. apply conditioning; obs_as_global_cond=False일때 condition data 설정
+                    trajectory[condition_mask] = condition_data[condition_mask]
+                    trajectory.requires_grad_(True)
+
+                    # 2. predict model output; noise 예측(traj랑 같은 dim)
+                    model_output = model(trajectory, t, 
+                        local_cond=local_cond, global_cond=global_cond)
+
+                    # 3. compute previous image: x_t -> x_t-1
+                    trajectory = scheduler.step(
+                        model_output, t, trajectory, 
+                        generator=generator, 
+                        prev_action=self.prev_action,
+                        **kwargs
+                        ).prev_sample
+                    
+                    trajectory = trajectory.detach()
+
+        else:
+            for t in scheduler.timesteps:
+
+                with torch.enable_grad():
+
+                    # 1. apply conditioning; obs_as_global_cond=False일때 condition data 설정
+                    trajectory[condition_mask] = condition_data[condition_mask]
+                    trajectory.requires_grad_(True)
+
+                    # 2. predict model output; noise 예측(traj랑 같은 dim)
+                    model_output = model(trajectory, t, 
+                        local_cond=local_cond, global_cond=global_cond)
+
+                    # 3. compute previous image: x_t -> x_t-1
+                    trajectory = scheduler.step(
+                        model_output, t, trajectory, 
+                        generator=generator, 
+                        prev_action=self.prev_action,
+                        **kwargs
+                        ).prev_sample
+                    
+                    trajectory = trajectory.detach()
 
 
         # finally make sure conditioning is enforced
         trajectory[condition_mask] = condition_data[condition_mask]        
 
         self.prev_action = trajectory.clone()
-        # print('prev_action:', self.prev_action)
         
 
         return trajectory
 
-
-    def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    # base obs는 abs
+    def predict_action_pigdm(self, 
+                             obs_dict: Dict[str, torch.Tensor], 
+                             abs_obs: Dict[str, np.ndarray]) -> Dict[str, torch.Tensor]:
         """
         obs_dict: must include "obs" key
         result: must include "action" key
         """
+
+        # relative PIGDM
+        if self.action_pose_repr == 'relative':
+            if self.prev_unnormalized_abs_action is not None:
+                self.prev_unnormalized_relative_action = get_relative_action_from_abs(
+                    action=self.prev_unnormalized_abs_action,
+                    env_obs=abs_obs)
+                self.prev_normalized_relative_action = self.normalizer['action'].normalize(
+                    torch.tensor(self.prev_unnormalized_relative_action, device=self.device)
+                ).unsqueeze(0)
+
+
+
         assert 'past_action' not in obs_dict # not implemented yet
         # normalize input
         nobs = self.normalizer.normalize(obs_dict)
@@ -298,13 +358,20 @@ class DiffusionUnetHybridImagePigdmPolicy(BaseImagePolicy):
         start = To - 1   # 1
         end = start + self.n_action_steps   # 1 + 15
         
-        action = action_pred[:,start:end]
+        action = action_pred[:,start:end] # (B, horizon, Da)
         
         result = {
             'action': action,
             'action_pred': action_pred
         }
+
+        # relative PIGDM
+        if self.action_pose_repr == 'relative':
+            self.prev_unnormalized_abs_action = get_abs_action_from_relative(
+                action=action_pred[0].detach().to('cpu').numpy(), env_obs=abs_obs)
+
         return result
+    
 
     # ========= training  ============
     def set_normalizer(self, normalizer: LinearNormalizer):

@@ -43,7 +43,7 @@ from diffusion_policy.real_world.real_inference_util import (
     get_real_obs_resolution, 
     get_real_obs_dict,
     get_real_relative_obs_dict,
-    get_real_action_from_relative)
+    get_abs_action_from_relative)
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
@@ -180,8 +180,12 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                 obs_dict = dict_apply(obs_dict_np, 
                     lambda x: torch.from_numpy(x).unsqueeze(0).to(device))
                 
-                # obs로 action 예측
-                result = policy.predict_action(obs_dict)   # {'action': ~ , 'action_pred': ~}
+                # action 예측
+                if use_pigdm == True:
+                    abs_obs = dict_apply(obs, lambda x: torch.from_numpy(x).unsqueeze(0).to(device))
+                    result = policy.predict_action_pigdm(obs_dict, obs)
+                else:
+                    result = policy.predict_action(obs_dict)
 
                 # 실제 실행할 action trajectory
                 action = result['action'][0].detach().to('cpu').numpy()   # [0]은 배치차원 제거, tensor --> np
@@ -230,18 +234,21 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                             else:
                                 obs_dict_np = get_real_obs_dict(
                                     env_obs=obs, shape_meta=cfg.task.shape_meta)
-
+                       
                             obs_dict = dict_apply(obs_dict_np, 
                                 lambda x: torch.from_numpy(x).unsqueeze(0).to(device))
                             
                             # action 예측 
-                            result = policy.predict_action(obs_dict)
+                            if use_pigdm == True:
+                                result = policy.predict_action_pigdm(obs_dict, obs)
+                            else:
+                                result = policy.predict_action(obs_dict)
                             # this action starts from the first obs step
                             action = result['action'][0].detach().to('cpu').numpy()   # 실행할 action[Horizon, Action_Dim]
                             
                             # Action: relative or abs
                             if action_pose_repr == 'relative':
-                                action = get_real_action_from_relative(action=action,env_obs=obs)
+                                action = get_abs_action_from_relative(action=action,env_obs=obs)
 
                             print('Inference latency:', time.time() - s)
 
