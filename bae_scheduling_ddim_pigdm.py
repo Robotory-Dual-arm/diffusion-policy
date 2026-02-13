@@ -319,7 +319,10 @@ class DDIMPIGDMScheduler(SchedulerMixin, ConfigMixin):
             # y = 조건 (이전 action 가져와야됨)
             
             # w = 조건 가중치 (from RTC)  guidance 추가하니까 inference time 늘어나서 action 1->2 버려짐 + To=2라서 1개 더 버려짐
-            w = torch.tensor([1., 1., 1., 7/8, 6/8, 5/8, 4/8, 3/8, 2/8, 1/8, 0., 0., 0., 0., 0., 0.])
+            w = torch.tensor([1., 1., 1., 7/8, 6/8, 5/8, 4/8, 3/8, 2/8, 1/8, 0., 0., 0., 0., 0., 0.]) # guidance_scale=5 잘됨
+            # w = torch.tensor([1., 1., 1., 3/4, 2/4, 1/4, 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]) # guidance_scale=10 안좋음
+            # w = torch.tensor([1., 1., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]) # 이거에 guidance_scale=10이 잘됨, 5는 잘안됨
+            # 뒤에 소프트 값들이 있을때 guidance_scale이 너무 크면 피팅되서 성능 하락하는듯!!
             w = w.to(sample.device)
             w = w * torch.expm1(w) / (math.e - 1.0)
             

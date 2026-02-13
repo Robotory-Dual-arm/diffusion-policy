@@ -137,7 +137,7 @@ class Dualarm(Node):
         # 오른손 wrench wrist
         self.wrench_wrist_R_subscriber = self.create_subscription(
             WrenchStamped,
-            '/aft_sensor1/wrench',
+            '/aft_sensor2/wrench',
             self.wrench_wrist_R_callback,
             10
             # callback_group=self.callback_group

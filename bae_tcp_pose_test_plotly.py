@@ -32,7 +32,7 @@ class LivePlot3D(Node):
         super().__init__('live_plot_3d')
 
         # URDF 로봇 모델
-        urdf_path = "/home/vision/dualarm_ws/src/doosan-robot2/dsr_description2/urdf/m0609.white.urdf"
+        urdf_path = "../m0609.white.urdf"
         self.robot = rtb.ERobot.URDF(urdf_path)
         self.last_fb_time = time.time()
 
