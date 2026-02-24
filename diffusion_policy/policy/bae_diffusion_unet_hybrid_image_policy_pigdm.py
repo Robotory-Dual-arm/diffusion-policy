@@ -409,10 +409,10 @@ class DiffusionUnetHybridImagePigdmPolicy(BaseImagePolicy):
         condition_mask = self.mask_generator(trajectory.shape)
 
         # Sample noise that we'll add to the images
-        noise = torch.randn(trajectory.shape, device=trajectory.device)
+        noise = torch.randn(trajectory.shape, device=trajectory.device)   # N(0, I) 노이즈
         bsz = trajectory.shape[0]
         # Sample a random timestep for each image
-        timesteps = torch.randint(
+        timesteps = torch.randint(   # 0 ~ num_train_timesteps 사이 정수
             0, self.noise_scheduler.config.num_train_timesteps, 
             (bsz,), device=trajectory.device
         ).long()
@@ -436,6 +436,9 @@ class DiffusionUnetHybridImagePigdmPolicy(BaseImagePolicy):
             target = noise
         elif pred_type == 'sample':
             target = trajectory
+        elif pred_type == 'v_prediction':
+            velocity = self.noise_scheduler.get_velocity(trajectory, noise, timesteps)
+            target = velocity   # |v - v_pred|^2  ->  (SNR + 1) weighting
         else:
             raise ValueError(f"Unsupported prediction type {pred_type}")
 

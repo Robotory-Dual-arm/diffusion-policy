@@ -375,6 +375,9 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             target = noise
         elif pred_type == 'sample':
             target = trajectory
+        elif pred_type == 'v_prediction':
+            velocity = self.noise_scheduler.get_velocity(trajectory, noise, timesteps)
+            target = velocity   # |v - v_pred|^2  ->  (SNR + 1) weighting
         else:
             raise ValueError(f"Unsupported prediction type {pred_type}")
 

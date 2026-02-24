@@ -29,6 +29,7 @@ from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.utils import _COMPATIBLE_STABLE_DIFFUSION_SCHEDULERS, BaseOutput, deprecate
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
 
+
 @dataclass
 # Copied from diffusers.schedulers.scheduling_ddpm.DDPMSchedulerOutput with DDPM->DDIM
 class DDIMSchedulerOutput(BaseOutput):
@@ -67,7 +68,7 @@ def betas_for_alpha_bar(num_diffusion_timesteps, max_beta=0.999, prediction_type
     """
 
     def alpha_bar(time_step):
-        
+
         # v-prediction
         if prediction_type == "v_prediction":
             return math.cos(time_step * math.pi / 2) ** 2
@@ -83,7 +84,7 @@ def betas_for_alpha_bar(num_diffusion_timesteps, max_beta=0.999, prediction_type
     return torch.tensor(betas)
 
 
-class DDIMPIGDMScheduler(SchedulerMixin, ConfigMixin):
+class DDIMScheduler(SchedulerMixin, ConfigMixin):
     """
     Denoising diffusion implicit models is a scheduler that extends the denoising procedure introduced in denoising
     diffusion probabilistic models (DDPMs) with non-Markovian guidance.
@@ -221,8 +222,7 @@ class DDIMPIGDMScheduler(SchedulerMixin, ConfigMixin):
         self,
         model_output: torch.FloatTensor,
         timestep: int,
-        sample: torch.FloatTensor,   # 현재 denoising step의 trajectory
-        prev_action: torch.FloatTensor,   # 이전 action 전체
+        sample: torch.FloatTensor,
         eta: float = 0.0,
         use_clipped_model_output: bool = False,
         generator=None,
@@ -317,43 +317,6 @@ class DDIMPIGDMScheduler(SchedulerMixin, ConfigMixin):
 
         # 7. compute x_t without "random noise" of formula (12) from https://arxiv.org/pdf/2010.02502.pdf
         prev_sample = alpha_prod_t_prev ** (0.5) * pred_original_sample + pred_sample_direction
-
-
-        ##### 8. PIGDM: add guidance
-        if prev_action is not None:
-            # prev_action 모양이 뭐냐 = (B, T, Da)
-            assert prev_action.shape[1] == 16, "prev_action should have 16 action steps"
-            y = torch.zeros_like(prev_action, device='cuda:0')
-            y[:, :10] = prev_action[:, 6:]   # 이전 action에서 앞에 6개 자르기
-            # y = 조건 (이전 action 가져와야됨)
-            
-            # w = 조건 가중치 (from RTC)  guidance 추가하니까 inference time 늘어나서 action 1->2 버려짐 + To=2라서 1개 더 버려짐
-            w = torch.tensor([1., 1., 1., 7/8, 6/8, 5/8, 4/8, 3/8, 2/8, 1/8, 0., 0., 0., 0., 0., 0.]) # guidance_scale=5 잘됨
-            # w = torch.tensor([1., 1., 1., 3/4, 2/4, 1/4, 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]) # guidance_scale=10 안좋음
-            # w = torch.tensor([1., 1., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]) # 이거에 guidance_scale=10이 잘됨, 5는 잘안됨
-            # 뒤에 소프트 값들이 있을때 guidance_scale이 너무 크면 피팅되서 성능 하락하는듯!!
-            w = w.to(sample.device)
-            w = w * torch.expm1(w) / (math.e - 1.0)
-            
-
-            # grad = 예측한 x_t 에 대해 x_t로 미분한 값 (grad 잘 살려서 가져오기)
-            error = (y - pred_original_sample) * w[:, None]
-
-            # y, origin_sample = (B, T, Da) / w = (T,) -> w[:, None] = (T, 1)
-            guidance = torch.autograd.grad(outputs=pred_original_sample,
-                                           inputs=sample,
-                                           grad_outputs=error,
-                                           retain_graph=True,
-                                           create_graph=False)
-            
-            guidance_scale = 5.0
-
-
-            # 계수가 필요없나? 아닌가?
-            # guidance = 0.00001 * vjp
-            
-            prev_sample = prev_sample + (alpha_prod_t ** (0.5)) * guidance[0] * guidance_scale
-
 
         if eta > 0:
             # randn_like does not support generator https://github.com/pytorch/pytorch/issues/27072
