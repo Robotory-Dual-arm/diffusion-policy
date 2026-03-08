@@ -1,8 +1,9 @@
 
 import rclpy
 from rclpy.node import Node
-from rclpy.executors import SingleThreadedExecutor
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup
+
 
 from spatialmath import SE3
 import spatialmath.base as smb
@@ -131,24 +132,24 @@ class Dualarm(Node):
             JointState,
             '/joint_states',
             self.joint_callback,
-            10
-            # callback_group=self.callback_group
+            10,
+            callback_group=self.callback_group
         )
         # 오른손 wrench wrist
         self.wrench_wrist_R_subscriber = self.create_subscription(
             WrenchStamped,
             '/aft_sensor2/wrench',
             self.wrench_wrist_R_callback,
-            10
-            # callback_group=self.callback_group
+            10,
+            callback_group=self.callback_group
         )
         # 오른손 wrench finger
         self.wrench_hand_R_subscriber = self.create_subscription(
             MultiDOFJointState,
             '/right_ft_sensor_broadcaster/wrench',
             self.wrench_hand_R_callback,
-            10
-            # callback_group=self.callback_group
+            10,
+            callback_group=self.callback_group
         )
 
 
@@ -491,9 +492,17 @@ class DualarmInterpolationController(mp.Process):
 
         rclpy.init(args=None)
         node = Dualarm()
-        
+
+        executor = MultiThreadedExecutor(num_threads=4)
+        executor.add_node(node)
+
         try:
-            rclpy.spin_once(node)
+            print("[DEBUG] Waiting for initial data...")
+            while (latest_joint_R is None or latest_hand_R is None or 
+                   latest_wrench_wrist_R is None or latest_wrench_index_R is None or 
+                   latest_wrench_middle_R is None or latest_wrench_ring_R is None):
+                executor.spin_once(timeout_sec=0.01)
+            print("[DEBUG] All initial data received!")
          
             # main loop
             dt = 1. / self.frequency
@@ -504,7 +513,9 @@ class DualarmInterpolationController(mp.Process):
             curr_hand_R = latest_hand_R
 
             # curr_tcp_L = doosan_robot.fkine(curr_joint_L)
-            print("[DEBUG] curr_joint_R:", curr_joint_R)
+            # print("[DEBUG] curr_joint_R:", curr_joint_R)
+            # print("[DEBUG] curr_hand_R:", curr_hand_R)
+            # print("[DEBUG] wrench: ", latest_wrench_wrist_R)
             curr_tcp_R = doosan_robot.fkine(curr_joint_R)
 
             # curr_tcp_pose_L = curr_tcp_L.t
@@ -544,7 +555,7 @@ class DualarmInterpolationController(mp.Process):
             cmd_index = 0
 
             while keep_running:   # 루프 시작
-                rclpy.spin_once(node)
+                executor.spin_once(timeout_sec=0.001)
                 # start control iteration
                 # send command to robot
                 t_now = time.monotonic()
