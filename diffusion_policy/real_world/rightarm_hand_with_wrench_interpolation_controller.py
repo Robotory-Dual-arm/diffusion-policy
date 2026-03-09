@@ -157,6 +157,14 @@ class Dualarm(Node):
         self.raw_wrench_wrist_R = None
         self.raw_wrench_fingers_R = [None] * 5  # thumb, index, middle, ring, baby
 
+        # ===== Wrench Offset Calibration =====
+        self.WRENCH_CALIB_COUNT = 10  # 초기 몇 번의 값을 모을지
+        self.wrench_calib_samples_wrist = []
+        self.wrench_calib_samples_fingers = [[] for _ in range(5)]  # thumb, index, middle, ring, baby
+        self.wrench_calibrated = False
+        self.wrench_offset_wrist_R = None
+        self.wrench_offset_fingers_R = [None] * 5
+
         # 250Hz 타이머로 EMA 갱신
         self.wrench_ema_timer = self.create_timer(
             1.0 / 250.0,  # 250Hz
@@ -208,14 +216,14 @@ class Dualarm(Node):
     #     ])
     def wrench_wrist_R_callback(self, msg):
         self.raw_wrench_wrist_R = np.array([
-            msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z,
+            msg.wrench.force.x,  msg.wrench.force.y,  msg.wrench.force.z,
             msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z
         ])
 
     def wrench_hand_R_callback(self, msg):
         self.raw_wrench_fingers_R = [
-            np.array([msg.wrench[i].force.x, msg.wrench[i].force.y, msg.wrench[i].force.z,
-                       msg.wrench[i].torque.x, msg.wrench[i].torque.y, msg.wrench[i].torque.z])
+            np.array([msg.wrench[i].force.x,  msg.wrench[i].force.y,  msg.wrench[i].force.z,
+                      msg.wrench[i].torque.x, msg.wrench[i].torque.y, msg.wrench[i].torque.z])
             for i in range(5)
         ]
 
@@ -225,28 +233,51 @@ class Dualarm(Node):
         global latest_wrench_thumb_R, latest_wrench_index_R, latest_wrench_middle_R, latest_wrench_ring_R, latest_wrench_baby_R
         a = self.WRENCH_EMA_ALPHA
 
+        # ===== Calibration Phase: 초기 N번 값을 모아서 offset 계산 =====
+        if not self.wrench_calibrated:
+            if self.raw_wrench_wrist_R is not None and self.raw_wrench_fingers_R[0] is not None:
+                self.wrench_calib_samples_wrist.append(self.raw_wrench_wrist_R.copy())
+                for i in range(5):
+                    self.wrench_calib_samples_fingers[i].append(self.raw_wrench_fingers_R[i].copy())
+
+                if len(self.wrench_calib_samples_wrist) >= self.WRENCH_CALIB_COUNT:
+
+                    self.wrench_offset_wrist_R = np.mean(self.wrench_calib_samples_wrist, axis=0)
+                    for i in range(5):
+                        self.wrench_offset_fingers_R[i] = np.mean(self.wrench_calib_samples_fingers[i], axis=0)
+                    self.wrench_calibrated = True
+                    print(f"[Wrench] Calibration done! ({self.WRENCH_CALIB_COUNT} samples)")
+                    print(f"[Wrench] Offset wrist: {self.wrench_offset_wrist_R}")
+                    print(f"[Wrench] Offset fingers: {[o.tolist() for o in self.wrench_offset_fingers_R]}")
+            return  
+
+        # ===== EMA Phase: offset 적용 후 EMA 갱신 =====
         # wrist
         if self.raw_wrench_wrist_R is not None:
+            corrected = self.raw_wrench_wrist_R - self.wrench_offset_wrist_R
             if latest_wrench_wrist_R is None:
-                latest_wrench_wrist_R = self.raw_wrench_wrist_R.copy()
+                latest_wrench_wrist_R = corrected.copy()
             else:
-                latest_wrench_wrist_R = a * self.raw_wrench_wrist_R + (1 - a) * latest_wrench_wrist_R
+                latest_wrench_wrist_R = a * corrected + (1 - a) * latest_wrench_wrist_R
 
         # fingers
         if self.raw_wrench_fingers_R[0] is not None:
-            raws = self.raw_wrench_fingers_R
+            corrected_fingers = [
+                self.raw_wrench_fingers_R[i] - self.wrench_offset_fingers_R[i]
+                for i in range(5)
+            ]
             if latest_wrench_index_R is None:
-                latest_wrench_thumb_R = raws[0].copy()
-                latest_wrench_index_R = raws[1].copy()
-                latest_wrench_middle_R = raws[2].copy()
-                latest_wrench_ring_R = raws[3].copy()
-                latest_wrench_baby_R = raws[4].copy()
+                latest_wrench_thumb_R = corrected_fingers[0].copy()
+                latest_wrench_index_R = corrected_fingers[1].copy()
+                latest_wrench_middle_R = corrected_fingers[2].copy()
+                latest_wrench_ring_R = corrected_fingers[3].copy()
+                latest_wrench_baby_R = corrected_fingers[4].copy()
             else:
-                latest_wrench_thumb_R = a * raws[0] + (1 - a) * latest_wrench_thumb_R
-                latest_wrench_index_R = a * raws[1] + (1 - a) * latest_wrench_index_R
-                latest_wrench_middle_R = a * raws[2] + (1 - a) * latest_wrench_middle_R
-                latest_wrench_ring_R = a * raws[3] + (1 - a) * latest_wrench_ring_R
-                latest_wrench_baby_R = a * raws[4] + (1 - a) * latest_wrench_baby_R
+                latest_wrench_thumb_R = a * corrected_fingers[0] + (1 - a) * latest_wrench_thumb_R
+                latest_wrench_index_R = a * corrected_fingers[1] + (1 - a) * latest_wrench_index_R
+                latest_wrench_middle_R = a * corrected_fingers[2] + (1 - a) * latest_wrench_middle_R
+                latest_wrench_ring_R = a * corrected_fingers[3] + (1 - a) * latest_wrench_ring_R
+                latest_wrench_baby_R = a * corrected_fingers[4] + (1 - a) * latest_wrench_baby_R
             
             # for usage
             latest_wrench_thumb_R = latest_wrench_thumb_R

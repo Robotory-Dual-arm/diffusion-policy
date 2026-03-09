@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import sys, os
 
 # ===== LPF 파라미터 =====
-EMA_ALPHA = 0.03   # EMA 계수 (0~1, 작을수록 더 smooth)
+EMA_ALPHA = 0.05   # EMA 계수 (0~1, 작을수록 더 smooth)
 
 def ema_filter(data, alpha):
     """Exponential Moving Average filter (각 열 독립 적용)"""
@@ -29,8 +29,7 @@ def plot_wrench(hdf5_file, demo_idx=0, target='wrist'):
         }
     
     data = sources[target]
-    if target != 'wrist':
-        data -= data[0]
+    data -= data[0]
     
     filtered = ema_filter(data, EMA_ALPHA)
     
@@ -73,4 +72,4 @@ if __name__ == "__main__":
         print(f"Error: target must be one of {TARGETS}")
         sys.exit(1)
     
-    plot_wrench(hdf5_file, target=target)
+    plot_wrench(hdf5_file, demo_idx=1, target=target)
