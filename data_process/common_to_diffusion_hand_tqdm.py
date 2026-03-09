@@ -7,7 +7,7 @@ import roboticstoolbox as rtb
 from roboticstoolbox import ERobot
 from spatialmath import SE3, UnitQuaternion
 
-urdf_path = "/home/vision/dualarm_ws/src/doosan-robot2/dsr_description2/urdf/m0609.white.urdf"
+urdf_path = "/home/baetae/diffusion-policy/data/baetae/m0609.white.urdf"
 robot = rtb.ERobot.URDF(urdf_path)   
 
 
@@ -59,7 +59,6 @@ def quat_to_6d(quats):
     return rotation_6d
 
 
-    return rotation_6d
 
 def resize_images(image_list, size=(320, 240)):
     """
@@ -72,8 +71,8 @@ def resize_images(image_list, size=(320, 240)):
 
 
 def main():
-    input_filenames = ['1009_2011/common_data.hdf5', '1009_2110/common_data.hdf5', '1009_2203/common_data.hdf5']
-    output_filename = 'diffusion_merong.hdf5'
+    input_filenames = ['/media/baetae/USB_400GB/0115_1513_70tasks/common_data.hdf5', '/media/baetae/USB_400GB/0115_1721_30_30tasks/common_data.hdf5']
+    output_filename = '/media/baetae/USB_400GB/diffusion_data_100task.hdf5'
     output_demo_idx = 0
 
     with h5py.File(output_filename, 'w') as output_file:
@@ -108,24 +107,24 @@ def main():
                     input_hand_pose_R = input_obs['hand_R'][::2]
                     input_image_H = input_obs['image_H'][::2]
                     input_image_F = input_obs['image_F'][::2]
-                    input_image_L = input_obs['image_L'][::2]
-                    input_image_R = input_obs['image_R'][::2]
+                    # input_image_L = input_obs['image_L'][::2]
+                    # input_image_R = input_obs['image_R'][::2]
 
                     # image 해상도 조정
                     output_image_H = resize_images(input_image_H, (320, 240))
                     output_image_F = resize_images(input_image_F, (320, 240))
-                    output_image_L = resize_images(input_image_L, (320, 240))
-                    output_image_R = resize_images(input_image_R, (320, 240))
+                    # output_image_L = resize_images(input_image_L, (320, 240))
+                    # output_image_R = resize_images(input_image_R, (320, 240))
 
                     # bgr -> rgb
                     output_image_H = np.array(output_image_H)[..., ::-1]
                     output_image_F = np.array(output_image_F)[..., ::-1]
-                    output_image_L = np.array(output_image_L)[..., ::-1]
-                    output_image_R = np.array(output_image_R)[..., ::-1]
+                    # output_image_L = np.array(output_image_L)[..., ::-1]
+                    # output_image_R = np.array(output_image_R)[..., ::-1]
                     output_image_H = list(output_image_H)
                     output_image_F = list(output_image_F)
-                    output_image_L = list(output_image_L)
-                    output_image_R = list(output_image_R)
+                    # output_image_L = list(output_image_L)
+                    # output_image_R = list(output_image_R)
 
                     # joint -> pose, quat
                     output_TCP_L = robot.fkine(input_joint_L)
@@ -156,8 +155,8 @@ def main():
                     output_obs.create_dataset('hand_pose_R', data=output_hand_pose_R[:-1])
                     output_obs.create_dataset('image0', data=output_image_H[:-1])
                     output_obs.create_dataset('image1', data=output_image_F[:-1])
-                    # output_obs.create_dataset('image2', data=output_image_L[:-1])
-                    # output_obs.create_dataset('image3', data=output_image_R[:-1])
+                    # output_obs.create_dataset('image0', data=output_image_L[:-1])
+                    # output_obs.create_dataset('image1', data=output_image_R[:-1])
 
                     # actions 저장
                     # quat -> 6d rotation

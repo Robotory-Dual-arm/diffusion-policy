@@ -1,7 +1,7 @@
 name: bae_grasp
 
 image_shape: [3, 120, 120]
-dataset_path: data/baetae/bae_grasp_image.hdf5
+dataset_path: /data/baetae/bae_grasp_image.hdf5
 
 shape_meta: &shape_meta
   obs:

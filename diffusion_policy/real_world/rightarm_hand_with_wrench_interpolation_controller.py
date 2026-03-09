@@ -152,6 +152,18 @@ class Dualarm(Node):
             callback_group=self.callback_group
         )
 
+        # ===== Wrench EMA 설정 =====
+        self.WRENCH_EMA_ALPHA = 0.03  # 0~1, 작을수록 smooth
+        self.raw_wrench_wrist_R = None
+        self.raw_wrench_fingers_R = [None] * 5  # thumb, index, middle, ring, baby
+
+        # 250Hz 타이머로 EMA 갱신
+        self.wrench_ema_timer = self.create_timer(
+            1.0 / 250.0,  # 250Hz
+            self.wrench_ema_update,
+            callback_group=self.callback_group
+        )
+
 
         # self.joint_command_publisher_L = self.create_publisher(
         #     JointState,
@@ -195,22 +207,54 @@ class Dualarm(Node):
     #         msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z
     #     ])
     def wrench_wrist_R_callback(self, msg):
-        global latest_wrench_wrist_R
-        latest_wrench_wrist_R = np.array([
+        self.raw_wrench_wrist_R = np.array([
             msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z,
             msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z
         ])
-    def wrench_hand_R_callback(self, msg):
-        global latest_wrench_thumb_R, latest_wrench_index_R, latest_wrench_middle_R, latest_wrench_ring_R, latest_wrench_baby_R
-        forces = [np.array([msg.wrench[i].force.x, msg.wrench[i].force.y, msg.wrench[i].force.z,
-                            msg.wrench[i].torque.x, msg.wrench[i].torque.y, msg.wrench[i].torque.z
-                           ]) for i in range(5)]
 
-        latest_wrench_thumb_R = forces[0] # 안씀
-        latest_wrench_index_R = forces[1][2:3] # z축 힘만 사용
-        latest_wrench_middle_R = forces[2][2:3] # z축 힘만 사용
-        latest_wrench_ring_R = forces[3][2:3] # z축 힘만 사용
-        latest_wrench_baby_R = forces[4] # 안씀
+    def wrench_hand_R_callback(self, msg):
+        self.raw_wrench_fingers_R = [
+            np.array([msg.wrench[i].force.x, msg.wrench[i].force.y, msg.wrench[i].force.z,
+                       msg.wrench[i].torque.x, msg.wrench[i].torque.y, msg.wrench[i].torque.z])
+            for i in range(5)
+        ]
+
+    def wrench_ema_update(self):
+
+        global latest_wrench_wrist_R
+        global latest_wrench_thumb_R, latest_wrench_index_R, latest_wrench_middle_R, latest_wrench_ring_R, latest_wrench_baby_R
+        a = self.WRENCH_EMA_ALPHA
+
+        # wrist
+        if self.raw_wrench_wrist_R is not None:
+            if latest_wrench_wrist_R is None:
+                latest_wrench_wrist_R = self.raw_wrench_wrist_R.copy()
+            else:
+                latest_wrench_wrist_R = a * self.raw_wrench_wrist_R + (1 - a) * latest_wrench_wrist_R
+
+        # fingers
+        if self.raw_wrench_fingers_R[0] is not None:
+            raws = self.raw_wrench_fingers_R
+            if latest_wrench_index_R is None:
+                latest_wrench_thumb_R = raws[0].copy()
+                latest_wrench_index_R = raws[1].copy()
+                latest_wrench_middle_R = raws[2].copy()
+                latest_wrench_ring_R = raws[3].copy()
+                latest_wrench_baby_R = raws[4].copy()
+            else:
+                latest_wrench_thumb_R = a * raws[0] + (1 - a) * latest_wrench_thumb_R
+                latest_wrench_index_R = a * raws[1] + (1 - a) * latest_wrench_index_R
+                latest_wrench_middle_R = a * raws[2] + (1 - a) * latest_wrench_middle_R
+                latest_wrench_ring_R = a * raws[3] + (1 - a) * latest_wrench_ring_R
+                latest_wrench_baby_R = a * raws[4] + (1 - a) * latest_wrench_baby_R
+            
+            # for usage
+            latest_wrench_thumb_R = latest_wrench_thumb_R
+            latest_wrench_index_R = latest_wrench_index_R[2:3]
+            latest_wrench_middle_R = latest_wrench_middle_R[2:3]
+            latest_wrench_ring_R = latest_wrench_ring_R[2:3]
+            latest_wrench_baby_R = latest_wrench_baby_R
+
 
     # def joint_command_publish_L(self, joint_position):
     #     msg = JointState()

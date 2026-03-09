@@ -1,7 +1,7 @@
 name: bae_dualarm_box_image_abs
 
 image_shape: [3, 240, 320]
-dataset_path: &dataset_path data/baetae/250912/diffusion_push_box_0912.hdf5
+dataset_path: &dataset_path /data/baetae/250912/diffusion_push_box_0912.hdf5
 
 shape_meta: &shape_meta
   obs:
