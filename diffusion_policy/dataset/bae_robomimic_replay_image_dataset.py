@@ -317,35 +317,6 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
             del data[key]
 
 
-        # Obs & Action --> 'relative' or 'abs' 
-
-        # Obs -> 'relative' or 'abs'
-        # if self.use_left_arm:
-        #     current_pose_L = copy.copy(obs_dict['robot_pose_L'][-1])
-        #     current_rot_mat_L = copy.copy(self.quat2mat.forward(obs_dict['robot_quat_L'][-1]))
-        #     if self.obs_pose_repr == 'relative':
-        #         obs_dict['robot_pose_L'], obs_dict['robot_quat_L'] = compute_relative_pose(
-        #             pos=obs_dict['robot_pose_L'],
-        #             rot=obs_dict['robot_quat_L'],
-        #             base_pos=current_pose_L,
-        #             base_rot_mat=current_rot_mat_L,
-        #             rot_transformer_to_mat=self.quat2mat,
-        #             rot_transformer_to_target=self.rot_mat2target.get('robot_quat_L', self.quat2mat))
-        #         obs_dict['robot_pose_L'] = obs_dict['robot_pose_L'].astype(np.float32)
-        #         obs_dict['robot_quat_L'] = obs_dict['robot_quat_L'].astype(np.float32)
-        # if self.use_right_arm:
-        #     current_pose_R = copy.copy(obs_dict['robot_pose_R'][-1])
-        #     current_rot_mat_R = copy.copy(self.quat2mat.forward(obs_dict['robot_quat_R'][-1]))
-        #     if self.obs_pose_repr == 'relative':
-        #         obs_dict['robot_pose_R'], obs_dict['robot_quat_R'] = compute_relative_pose(
-        #                 pos=obs_dict['robot_pose_R'],
-        #                 rot=obs_dict['robot_quat_R'],
-        #                 base_pos=current_pose_R,
-        #                 base_rot_mat=current_rot_mat_R,
-        #                 rot_transformer_to_mat=self.quat2mat,
-        #                 rot_transformer_to_target=self.rot_mat2target.get('robot_quat_R', self.quat2mat))
-        #         obs_dict['robot_pose_R'] = obs_dict['robot_pose_R'].astype(np.float32)
-        #         obs_dict['robot_quat_R'] = obs_dict['robot_quat_R'].astype(np.float32)
 
 
         if self.use_left_arm:
@@ -399,29 +370,6 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
         if self.action_pose_repr == 'relative':
             relative_action_list = list()
             action_index = 0 
-
-            # if self.use_left_arm:
-            #     left_action_pos, left_action_rot = compute_relative_pose(
-            #         pos=data['action'][..., action_index:action_index+3],
-            #         rot=data['action'][..., action_index+3:action_index+9],
-            #         base_pos=current_pose_L,
-            #         base_rot_mat=current_rot_mat_L,
-            #         rot_transformer_to_mat=self.rot6d2mat,
-            #         rot_transformer_to_target=self.rot_mat2target['action'])
-            #     action_index += 9
-            #     relative_action_list.append(left_action_pos.astype(np.float32))
-            #     relative_action_list.append(left_action_rot.astype(np.float32)) 
-            # if self.use_right_arm:
-            #     right_action_pos, right_action_rot = compute_relative_pose(
-            #         pos=data['action'][..., action_index:action_index+3],
-            #         rot=data['action'][..., action_index+3:action_index+9],
-            #         base_pos=current_pose_R,
-            #         base_rot_mat=current_rot_mat_R,
-            #         rot_transformer_to_mat=self.rot6d2mat,
-            #         rot_transformer_to_target=self.rot_mat2target['action'])
-            #     action_index += 9
-            #     relative_action_list.append(right_action_pos.astype(np.float32))
-            #     relative_action_list.append(right_action_rot.astype(np.float32))
 
             if self.use_left_arm:
                 action_relative_pose_mat_L = convert_pose_mat_rep(

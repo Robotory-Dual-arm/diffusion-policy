@@ -20,6 +20,8 @@ import robomimic.models.base_nets as rmbn
 import diffusion_policy.model.vision.crop_randomizer as dmvc
 from diffusion_policy.common.pytorch_util import dict_apply, replace_submodules
 
+from diffusion_policy.model.force.force_encoder import CausalConvForceEncoder
+
 
 class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
     def __init__(self, 
@@ -116,7 +118,6 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             )
         # robomimic bc-rnn의 obs encoder 사용
         obs_encoder = policy.nets['policy'].nets['encoder'].nets['obs']
-        # 이거 image만 64 dim으로 변환하고, low_dim은 그냥 concat만 함.
         
         # BatchNorm -> GroupNorm
         if obs_encoder_group_norm:
@@ -144,18 +145,22 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
                     pos_enc=x.pos_enc
                 )
             )
-        print(';;;;;;;;;;;;;;;;;;;;;;;;;;')
-        print(obs_encoder.obs_shapes)
-        print(obs_encoder.obs_nets)
-        print(';;;;;;;;;;;;;;;;;;;;;;;;;;')
+
+
+        ### force encoder
+        obs_force_encoder = CausalConvForceEncoder(feature_dim=256) # 몇으로할까??~
+
+                                                   
+        
+
         # Diffusion Model 시작 ==================================================
         # create diffusion model
-        obs_feature_dim = obs_encoder.output_shape()[0] # image * 64 + low_dim * 1
+        obs_feature_dim = obs_encoder.output_shape()[0] # (image * 64 + low_dim * 1)
         input_dim = action_dim + obs_feature_dim
         global_cond_dim = None
         if obs_as_global_cond:   # True
             input_dim = action_dim
-            global_cond_dim = obs_feature_dim * n_obs_steps
+            global_cond_dim = obs_feature_dim * n_obs_steps # 2*(image * 64 + low_dim * 1)
 
         # U-Net 모델 생성
         model = ConditionalUnet1D(
@@ -250,7 +255,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         B, To = value.shape[:2]
         T = self.horizon    # 예측할 step수
         Da = self.action_dim   # action의 dimension
-        Do = self.obs_feature_dim   # encoder(obs)의 dimension
+        Do = self.obs_feature_dim   # 관찰할 것의 dimension
         To = self.n_obs_steps   # 관찰한 step수
 
         # build input

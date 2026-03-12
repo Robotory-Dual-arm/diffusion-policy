@@ -47,6 +47,11 @@ data
             wrench_ring   # N, len=1 (fz)
 """
 
+# 데이터 초기에 wrench 값 10개 평균을 0set으로 맞추기
+# 초반에 wrench가 24개 먼저 시작 25번째에 image랑 sync -> wrench값 25개씩 []로 묶기
+#         img         img         img
+# [f f f f f] [f f f f f] [f f f f f]
+
 def quat_to_6d(quats):
     """
     quats: [[x,y,z,w], [x,y,z,w], ...]  (x,y,z,w 순서)
@@ -72,7 +77,6 @@ def resize_images(image_list, size=(320, 240)):
     return     : [resized_img1, resized_img2, ...] (모두 (240,320,3))
     """
     return [cv2.resize(img, size) for img in image_list]
-
 
 
 def main():

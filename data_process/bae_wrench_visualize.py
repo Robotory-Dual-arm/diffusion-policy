@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import sys, os
 
 # ===== LPF 파라미터 =====
-EMA_ALPHA = 0.05   # EMA 계수 (0~1, 작을수록 더 smooth)
+EMA_ALPHA = 0.04   # EMA 계수 (0~1, 작을수록 더 smooth)
 
 def ema_filter(data, alpha):
     """Exponential Moving Average filter (각 열 독립 적용)"""
@@ -37,16 +37,16 @@ def plot_wrench(hdf5_file, demo_idx=0, target='wrist'):
     fig, axes = plt.subplots(2, 1, figsize=(14, 7), sharex=True)
     
     for i, label in enumerate(['Fx', 'Fy', 'Fz']):
-        axes[0].plot(t, data[:, i], color=colors[i], alpha=0.3, linewidth=0.5)
-        axes[0].plot(t, filtered[:, i], color=colors[i], label=f'{label} (EMA α={EMA_ALPHA})', linewidth=1.5)
+        axes[0].plot(t, data[:, i], color=colors[i], alpha=0.5, linewidth=0.3)
+        axes[0].plot(t, filtered[:, i], color=colors[i], label=f'{label} (EMA α={EMA_ALPHA})', linewidth=1.0)
     axes[0].set_ylabel('Force (N)')
     axes[0].set_title(f'{target.capitalize()} Forces')
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
     
     for i, label in enumerate(['Tx', 'Ty', 'Tz']):
-        axes[1].plot(t, data[:, 3+i], color=colors[i], alpha=0.3, linewidth=0.5)
-        axes[1].plot(t, filtered[:, 3+i], color=colors[i], label=f'{label} (EMA α={EMA_ALPHA})', linewidth=1.5)
+        axes[1].plot(t, data[:, 3+i], color=colors[i], alpha=0.5, linewidth=0.3)
+        axes[1].plot(t, filtered[:, 3+i], color=colors[i], label=f'{label} (EMA α={EMA_ALPHA})', linewidth=1.0)
     axes[1].set_xlabel('Time (s)')
     axes[1].set_ylabel('Torque (Nm)')
     axes[1].set_title(f'{target.capitalize()} Torques')

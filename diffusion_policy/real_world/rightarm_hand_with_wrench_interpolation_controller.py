@@ -716,12 +716,16 @@ class DualarmInterpolationController(mp.Process):
                         state[key] = np.array(curr_hand_R)
                     elif key == 'wrench_wrist_R':
                         state[key] = np.array(curr_wrench_wrist_R)
+                    # elif key == 'wrench_thumb_R':
+                    #     state[key] = np.array(curr_wrench_thumb_R)
                     elif key == 'wrench_index_R':
                         state[key] = np.array(curr_wrench_index_R)
                     elif key == 'wrench_middle_R':
                         state[key] = np.array(curr_wrench_middle_R)
                     elif key == 'wrench_ring_R':
                         state[key] = np.array(curr_wrench_ring_R)
+                    # elif key == 'wrench_baby_R':
+                    #     state[key] = np.array(curr_wrench_baby_R)
                         
                 state['robot_receive_timestamp'] = time.time()
                 self.ring_buffer.put(state)   

@@ -36,6 +36,10 @@ shape_meta: &shape_meta
   action: 
     shape: [32] # robot_pose_L[3] + robot_rot6d_L[6] + robot_pose_R[3] + robot_rot6d_R[6] + hand_pose_L[7] + hand_pose_R[7]
 
+pose_repr: &pose_repr
+  obs_pose_repr: abs # abs or relative
+  action_pose_repr: relative # abs or relative or delta
+  
 env_runner:
   _target_: diffusion_policy.env_runner.real_pusht_image_runner.RealPushTImageRunner
 
