@@ -72,7 +72,7 @@ class DualarmRealEnv:
             # video capture params
             video_capture_fps=30,
             # video_capture_resolution=(1280,720),
-            video_capture_resolution=(224,224),   
+            video_capture_resolution=(640,480),   
             # saving params
             record_raw_video=False,   
             thread_per_video=2,

@@ -37,6 +37,9 @@ def get_real_obs_dict(
         elif type == 'low_dim':
             this_data_in = env_obs[key]
             obs_dict_np[key] = this_data_in
+        elif type == 'wrench':
+            this_data_in = env_obs[key]
+            obs_dict_np[key] = this_data_in
     return obs_dict_np
 
 
@@ -104,7 +107,9 @@ def get_real_relative_obs_dict(
         elif type == 'low_dim' and 'wrt' not in key:
             this_data_in = env_obs[key]
             obs_dict_np[key] = this_data_in
-    
+        elif type == 'wrench':
+            this_data_in = env_obs[key]
+            obs_dict_np[key] = this_data_in
 
     # Handle bimanual relative pose computation
     use_left_arm = 'robot_pose_L' in env_obs 

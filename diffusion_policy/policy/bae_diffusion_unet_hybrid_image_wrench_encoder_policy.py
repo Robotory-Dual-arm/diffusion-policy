@@ -364,7 +364,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
                 generator=generator,
                 **kwargs
                 ).prev_sample
-        
+
         # finally make sure conditioning is enforced
         trajectory[condition_mask] = condition_data[condition_mask]        
 
@@ -408,7 +408,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         wrench_nobs = {}
         for key in self.wrench_keys:
             wrench_nobs[key] = nobs.pop(key)  # Save and remove from nobs
-        
+      
         this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:])) # (B, To, ...) -> (B*To, ...)
 
         modality_features = list()
@@ -433,7 +433,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         low_dim_features = []
         for key in self.low_dim_keys:
             low_dim_features.append(this_nobs[key].reshape(B, -1))
-        
+
         # Force encoding
         force_features = []
         combined_wrench_data = []

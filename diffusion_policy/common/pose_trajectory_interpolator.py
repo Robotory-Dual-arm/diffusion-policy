@@ -69,7 +69,7 @@ class PoseTrajectoryInterpolator:
 
             
             elif self.rightarm_hand:
-                assert len(poses[0]) == 12 or len(poses[0]) == 13
+                assert len(poses[0]) == 12 or len(poses[0]) == 13 or len(poses[0]) == 17
                 pos_R = poses[:,:3]
                 rot_R = st.Rotation.from_rotvec(poses[:,3:6])
                 hand_R = poses[:,6:]

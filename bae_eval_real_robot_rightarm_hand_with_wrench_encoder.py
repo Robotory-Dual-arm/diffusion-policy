@@ -1,7 +1,7 @@
 #!/home/vision/anaconda3/envs/robodiff/bin/python
 
 # 실행코드
-# python bae_eval_real_robot_rightarm_hand_with_wrench.py --input data/outputs/251214_erase_board/checkpoints/epoch=1000-train_loss=0.001.ckpt --output data/results
+# python bae_eval_real_robot_rightarm_hand_with_wrench_encoder.py --input data/outputs/260330_erase_and_trash/checkpoints/epoch=0900-train_loss=0.001.ckpt --output data/results
 """
 Usage:
 (robodiff)$ python eval_real_robot.py -i <ckpt_path> -o <save_dir> --robot_ip <ip_of_ur5>
@@ -74,7 +74,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
     cfg = payload['cfg']   # yaml에 있던 변수들 설정값
     
     # Head = 242422304502, Front = 336222070518, Left = 218622276386, Right = 126122270712
-    serial_numbers = ['242422304502', '336222070518'] # head, front
+    serial_numbers = ['126122270712', '151222078010'] # right, table
     use_pigdm = False
     if use_pigdm == True:
         cfg._target_ = 'diffusion_policy.workspace.bae_train_diffusion_unet_hybrid_pigdm_workspace.TrainDiffusionUnetHybridPigdmWorkspace'
@@ -178,15 +178,15 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                 else:
                     obs_dict_np = get_real_obs_dict(
                         env_obs=obs, shape_meta=cfg.task.shape_meta)
-                
+
                 for key in obs_dict_np.keys():
                     print(f"{key}: {obs_dict_np[key].shape}, {obs_dict_np[key].dtype}")
 
                 # shape_meta 계층구조는 유지하면서 np --> tensor로 변환, 텐서 배치차원 추가
                 obs_dict = dict_apply(obs_dict_np, 
                     lambda x: torch.from_numpy(x).unsqueeze(0).to(device))
-                
-                # obs로 action 예측
+
+                # obs로 action 예측 
                 if use_pigdm == True:
                     result = policy.predict_action_pigdm(obs_dict, obs)
                 else:
@@ -196,6 +196,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                 action = result['action'][0].detach().to('cpu').numpy()   # [0]은 배치차원 제거, tensor --> np
                 assert action.shape[-1] == cfg.task.shape_meta.action.shape[0]   # action 차원에 맞게 바꿔주기
                 del result
+
             np.set_printoptions(suppress=True, floatmode="fixed", precision=11)
             print('Ready!')
             while True:
@@ -304,21 +305,21 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                        
 
                         # visualize
-                        episode_id = env.replay_buffer.n_episodes
-                        vis_img = obs[f'image{vis_camera_idx}'][-1]
-                        text = 'Episode: {}, Time: {:.1f}'.format(
-                            episode_id, time.monotonic() - t_start
-                        )
-                        cv2.putText(
-                            vis_img,
-                            text,
-                            (10,20),
-                            fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-                            fontScale=0.5,
-                            thickness=1,
-                            color=(255,255,255)
-                        )
-                        cv2.imshow('default', vis_img[...,::-1])
+                        # episode_id = env.replay_buffer.n_episodes
+                        # vis_img = obs[f'image{vis_camera_idx}'][-1]
+                        # text = 'Episode: {}, Time: {:.1f}'.format(
+                        #     episode_id, time.monotonic() - t_start
+                        # )
+                        # cv2.putText(
+                        #     vis_img,
+                        #     text,
+                        #     (10,20),
+                        #     fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                        #     fontScale=0.5,
+                        #     thickness=1,
+                        #     color=(255,255,255)
+                        # )
+                        # cv2.imshow('default', vis_img[...,::-1])
 
 
                         # 's' 누르면 종료

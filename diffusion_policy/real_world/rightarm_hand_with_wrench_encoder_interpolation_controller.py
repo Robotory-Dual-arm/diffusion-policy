@@ -109,7 +109,7 @@ class Dualarm(Node):
                          [f"right_baby_joint{i}" for i in range(1,4)]
 
         # self.use_left_hand_index = [0,1,2,4,7,10] 0-14
-        self.use_right_hand_index = [15,16,17,19,22,25] # 15-29
+        self.use_right_hand_index = [15,16,17,19,20,22,23,25,26,28,29] # 15-29
 
         self.joint_subscriber = self.create_subscription(
             JointState,
@@ -121,7 +121,7 @@ class Dualarm(Node):
         # 오른손 wrench wrist
         self.wrench_wrist_R_subscriber = self.create_subscription(
             WrenchStamped,
-            '/aft_sensor2/wrench',
+            '/aft_sensor1/wrench',
             self.wrench_wrist_R_callback,
             10,
             callback_group=self.callback_group
@@ -195,7 +195,7 @@ class Dualarm(Node):
         # latest_joint_L = joint_position[:6]
         latest_joint_R = joint_position[6:]
         # latest_hand_L = hand_position[0:3] + hand_position[4:6] + hand_position[7:9]
-        latest_hand_R = hand_position[self.use_right_hand_index]
+        latest_hand_R = np.array([hand_position[i] for i in self.use_right_hand_index])
     
     # def wrench_wrist_L_callback(self, msg):
     #     global latest_wrench_wrist_L

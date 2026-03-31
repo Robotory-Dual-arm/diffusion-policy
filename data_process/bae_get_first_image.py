@@ -2,8 +2,8 @@ import h5py
 import numpy as np
 from PIL import Image
 
-h5_path = "251210/force_diffusion_data.hdf5"
-image_name = "image0"
+h5_path = "/data/260305_2248/common_data.hdf5"
+image_name = "image_R"
 
 out_path = f"{image_name}.png"
 
