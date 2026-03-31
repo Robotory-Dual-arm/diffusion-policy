@@ -121,12 +121,12 @@ class Dualarm(Node):
                           'left_index_joint1', 'left_index_joint2', 'left_index_joint3',
                           'left_middle_joint1', 'left_middle_joint2', 'left_middle_joint3',
                           'left_ring_joint1', 'left_ring_joint2', 'left_ring_joint3',
-                          'left_pinky_joint1', 'left_pinky_joint2', 'left_pinky_joint3',
+                          'left_baby_joint1', 'left_baby_joint2', 'left_baby_joint3',
                           'right_thumb_joint1', 'right_thumb_joint2', 'right_thumb_joint3',
                           'right_index_joint1', 'right_index_joint2', 'right_index_joint3',
                           'right_middle_joint1', 'right_middle_joint2', 'right_middle_joint3',
                           'right_ring_joint1', 'right_ring_joint2', 'right_ring_joint3',
-                          'right_pinky_joint1', 'right_pinky_joint2', 'right_pinky_joint3']
+                          'right_baby_joint1', 'right_baby_joint2', 'right_baby_joint3']
 
         self.joint_subscriber = self.create_subscription(
             JointState,

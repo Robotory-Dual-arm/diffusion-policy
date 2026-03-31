@@ -41,7 +41,7 @@ DEFAULT_OBS_KEY_MAP = {
     'wrench_index_R': 'wrench_index_R',
     'wrench_middle_R': 'wrench_middle_R',
     'wrench_ring_R': 'wrench_ring_R',
-    'wrench_pinky_R': 'wrench_pinky_R',
+    'wrench_baby_R': 'wrench_baby_R',
 
     # timestamps
     'step_idx': 'step_idx',

@@ -40,7 +40,7 @@ def load_hand_joints(filepath):
     # index: joint 1,2,3 → 인덱스 3,4,5
     # middle: joint 1,2,3 → 인덱스 6,7,8
     # ring: joint 1,2,3 → 인덱스 9,10,11
-    # pinky: joint 1,2,3 → 인덱스 12,13,14
+    # baby: joint 1,2,3 → 인덱스 12,13,14
     
     return {
         'hand_L': hand_L,

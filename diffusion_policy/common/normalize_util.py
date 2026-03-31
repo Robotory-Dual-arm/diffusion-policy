@@ -4,6 +4,42 @@ import numpy as np
 import torch
 
 
+def array_to_stats_for_wrench(arr: np.ndarray, history=32):
+    stat_n = {
+        'min': np.min(arr, axis=(0, 2)),
+        'max': np.max(arr, axis=(0, 2)),
+        'mean': np.mean(arr, axis=(0, 2)),
+        'std': np.std(arr, axis=(0, 2))
+    }
+
+    stat = {
+        k: np.repeat(v[:, None], history, axis=1)
+        for k, v in stat_n.items()
+    }
+
+    return stat
+
+def array_to_stats(arr: np.ndarray):
+    stat = {
+        'min': np.min(arr, axis=0),
+        'max': np.max(arr, axis=0),
+        'mean': np.mean(arr, axis=0),
+        'std': np.std(arr, axis=0)
+    }
+    return stat
+
+def concatenate_normalizer(normalizers: list):
+    scale = torch.cat([normalizer.params_dict['scale'] for normalizer in normalizers], dim=-1)
+    offset = torch.cat([normalizer.params_dict['offset'] for normalizer in normalizers], dim=-1)
+    input_stats_dict = dict_apply_reduce(
+        [normalizer.params_dict['input_stats'] for normalizer in normalizers], 
+        lambda x: torch.cat(x, dim=-1))
+    return SingleFieldLinearNormalizer.create_manual(
+        scale=scale,
+        offset=offset,
+        input_stats_dict=input_stats_dict
+    )
+
 def get_range_normalizer_from_stat(stat, output_max=1, output_min=-1, range_eps=1e-7):
     # -1, 1 normalization
     input_max = stat['max']
@@ -189,7 +225,7 @@ def robomimic_abs_action_only_dual_arm_normalizer_from_stat(stat):
 
     Da = stat['max'].shape[-1]
 
-    if Da == 32: # robot_pose_L(3) + robot_6d_rot_L(6) + robot_pose_R(3) + robot_6d_rot_R(6) + hand_pose_L(7) +hand_pose_R(7)
+    if Da == 32: # robot_pose_L(3) + robot_6d_rot_L(6) + robot_pose_R(3) + robot_6d_rot_R(6) + hand_pose_L(7) + hand_pose_R(7)
         result = dict_apply_split(
             stat, lambda x: {
                 'pos0': x[..., :3],
@@ -264,24 +300,3 @@ def robomimic_abs_action_only_dual_arm_normalizer_from_stat(stat):
         input_stats_dict=info
     )
 
-
-def array_to_stats(arr: np.ndarray):
-    stat = {
-        'min': np.min(arr, axis=0),
-        'max': np.max(arr, axis=0),
-        'mean': np.mean(arr, axis=0),
-        'std': np.std(arr, axis=0)
-    }
-    return stat
-
-def concatenate_normalizer(normalizers: list):
-    scale = torch.cat([normalizer.params_dict['scale'] for normalizer in normalizers], dim=-1)
-    offset = torch.cat([normalizer.params_dict['offset'] for normalizer in normalizers], dim=-1)
-    input_stats_dict = dict_apply_reduce(
-        [normalizer.params_dict['input_stats'] for normalizer in normalizers], 
-        lambda x: torch.cat(x, dim=-1))
-    return SingleFieldLinearNormalizer.create_manual(
-        scale=scale,
-        offset=offset,
-        input_stats_dict=input_stats_dict
-    )

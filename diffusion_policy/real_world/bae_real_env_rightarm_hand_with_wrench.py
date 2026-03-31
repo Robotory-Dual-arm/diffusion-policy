@@ -41,7 +41,7 @@ DEFAULT_OBS_KEY_MAP = {
     'wrench_index_R': 'wrench_index_R',
     'wrench_middle_R': 'wrench_middle_R',
     'wrench_ring_R': 'wrench_ring_R',
-    'wrench_pinky_R': 'wrench_pinky_R',
+    'wrench_baby_R': 'wrench_baby_R',
 
     # timestamps
     'step_idx': 'step_idx',
@@ -54,10 +54,10 @@ class DualarmRealEnv:
             output_dir,  
             robot_ip,   
             # env params
-            frequency=20,
+            frequency=10, # 로봇 traj 주기
             n_obs_steps=2,
             # obs
-            obs_image_resolution=(320.240),
+            obs_image_resolution=(320, 240),
             max_obs_buffer_size=30,
             camera_serial_numbers=None,
             # camera_serial_numbers=None,
@@ -285,19 +285,19 @@ class DualarmRealEnv:
 
         # get data
         # 30 Hz, camera_receive_timestamp
-        k = math.ceil(self.n_obs_steps * (self.video_capture_fps / self.frequency))
+        k = math.ceil(self.n_obs_steps * (self.video_capture_fps / self.frequency)) # 30hz 이미지 0.2초 = 6장
         self.last_realsense_data = self.realsense.get(
             k=k, 
             out=self.last_realsense_data)
 
         # 125 hz, robot_receive_timestamp
-        last_robot_data = self.robot.get_all_state()   
+        last_robot_data = self.robot.get_all_state()   # 남은거 긁어옴
         # both have more than n_obs_steps data
 
         # align camera obs timestamps
         dt = 1 / self.frequency
-        last_timestamp = np.max([x['timestamp'][-1] for x in self.last_realsense_data.values()])
-        obs_align_timestamps = last_timestamp - (np.arange(self.n_obs_steps)[::-1] * dt)
+        last_timestamp = np.max([x['timestamp'][-1] for x in self.last_realsense_data.values()]) # 최신 이미지 시간
+        obs_align_timestamps = last_timestamp - (np.arange(self.n_obs_steps)[::-1] * dt) # [last - 0.1, last]
         # 카메라 obs 데이터 얻기
         camera_obs = dict()
         for camera_idx, value in self.last_realsense_data.items():
@@ -318,7 +318,7 @@ class DualarmRealEnv:
         robot_timestamps = last_robot_data['robot_receive_timestamp']
         this_timestamps = robot_timestamps
         this_idxs = list()
-        for t in obs_align_timestamps:
+        for t in obs_align_timestamps: # [current-0.1, current]
             is_before_idxs = np.nonzero(this_timestamps < t)[0]
             this_idx = 0
             if len(is_before_idxs) > 0:
@@ -333,7 +333,7 @@ class DualarmRealEnv:
         
         robot_obs = dict()
         for k, v in robot_obs_raw.items():
-            robot_obs[k] = v[this_idxs]
+            robot_obs[k] = v[this_idxs] # 그 시간의 데이터 저장
 
         # accumulate obs; Accumulator 사용
         if self.obs_accumulator is not None:

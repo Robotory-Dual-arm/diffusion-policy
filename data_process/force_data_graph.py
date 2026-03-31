@@ -9,7 +9,10 @@ def plot_force_and_joint_data(hdf5_file, demo_idx):
     
     with h5py.File(hdf5_file, 'r') as f:
         demo = f[f'data/demo_{demo_idx}']
-        obs = demo['observations']
+        try:
+            obs = demo['observations']
+        except:
+            obs = demo['obs']
         
         # Load robot data (20Hz)
         joint_R = obs['joint_R'][:]
@@ -89,8 +92,11 @@ def plot_thumb_fz_spectrogram(demo_idx, fs=250):
     
     with h5py.File(hdf5_file, 'r') as f:
         demo = f[f'data/demo_{demo_idx}']
-        obs = demo['observations']
-        
+        try:
+            obs = demo['observations']
+        except KeyError:
+            obs = demo['obs']
+
         # Load wrench data (250Hz) - Right wrist
         timestamp_wrench = obs['timestamp_wrench'][:]
         

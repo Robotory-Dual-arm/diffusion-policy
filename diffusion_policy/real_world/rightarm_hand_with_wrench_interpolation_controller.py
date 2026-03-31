@@ -120,12 +120,12 @@ class Dualarm(Node):
                          [f"left_index_joint{i}" for i in range(1,4)] + \
                          [f"left_middle_joint{i}" for i in range(1,4)] + \
                          [f"left_ring_joint{i}" for i in range(1,4)] + \
-                         [f"left_pinky_joint{i}" for i in range(1,4)] + \
+                         [f"left_baby_joint{i}" for i in range(1,4)] + \
                          [f"right_thumb_joint{i}" for i in range(1,4)] + \
                          [f"right_index_joint{i}" for i in range(1,4)] + \
                          [f"right_middle_joint{i}" for i in range(1,4)] + \
                          [f"right_ring_joint{i}" for i in range(1,4)] + \
-                         [f"right_pinky_joint{i}" for i in range(1,4)]
+                         [f"right_baby_joint{i}" for i in range(1,4)]
       
 
         self.joint_subscriber = self.create_subscription(

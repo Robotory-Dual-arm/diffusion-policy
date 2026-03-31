@@ -24,6 +24,7 @@ from diffusion_policy.codecs.imagecodecs_numcodecs import register_codecs, Jpeg2
 from diffusion_policy.common.replay_buffer import ReplayBuffer
 from diffusion_policy.common.sampler import SequenceSampler, get_val_mask
 from diffusion_policy.common.normalize_util import (
+    array_to_stats_for_wrench,
     robomimic_abs_action_only_normalizer_from_stat,
     robomimic_abs_action_only_dual_arm_normalizer_from_stat,
     get_range_normalizer_from_stat,
@@ -98,6 +99,7 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
 
         rgb_keys = list()
         lowdim_keys = list()
+        wrench_keys = list()
         obs_shape_meta = shape_meta['obs']
         for key, attr in obs_shape_meta.items():
             type = attr.get('type', 'low_dim')
@@ -105,14 +107,16 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
                 rgb_keys.append(key)
             elif type == 'low_dim':
                 lowdim_keys.append(key)
-        
+            elif type == 'wrench':
+                wrench_keys.append(key)
+
         # for key in rgb_keys:
         #     replay_buffer[key].compressor.numthreads=1
 
         key_first_k = dict()
         if n_obs_steps is not None:
             # only take first k obs from images
-            for key in rgb_keys + lowdim_keys:
+            for key in rgb_keys + wrench_keys + lowdim_keys:
                 key_first_k[key] = n_obs_steps   # key_first_k[image0]=2, k[image1]=2, k[low_dim0]=2 ...
 
         val_mask = get_val_mask(
@@ -133,6 +137,7 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
         self.shape_meta = shape_meta
         self.rgb_keys = rgb_keys
         self.lowdim_keys = lowdim_keys
+        self.wrench_keys = wrench_keys
         self.abs_action = abs_action
         self.n_obs_steps = n_obs_steps
         self.train_mask = train_mask
@@ -167,7 +172,6 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
         self.use_right_arm = 'robot_pose_R' in self.lowdim_keys
         self.use_left_hand = 'hand_pose_L' in self.lowdim_keys
         self.use_right_hand = 'hand_pose_R' in self.lowdim_keys
-        
 
 
     def get_validation_dataset(self):
@@ -186,7 +190,7 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
         normalizer = LinearNormalizer()
 
         # enumerate the dataset and save low_dim data
-        data_cache = {key: list() for key in self.lowdim_keys + ['action']}
+        data_cache = {key: list() for key in self.lowdim_keys + self.wrench_keys + ['action']}
         self.sampler.ignore_rgb(True)
         dataloader = torch.utils.data.DataLoader(
             dataset=self,
@@ -194,21 +198,28 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
             num_workers=32,
         )
         for batch in tqdm(dataloader, desc='iterating dataset to get normalization'): # 여기서 __getitem__ 호출 -> sampler.sequence 뭐시기 실행
-            # for key in self.lowdim_keys:
-            #     print("[DEBUG] batch['obs'][key].shape:", batch['obs'][key].shape)
-            # breakpoint()
             for key in self.lowdim_keys:
                 data_cache[key].append(copy.deepcopy(batch['obs'][key]))
+            if self.wrench_keys is not None:
+                for key in self.wrench_keys:
+                    data_cache[key].append(copy.deepcopy(batch['obs'][key]))
             data_cache['action'].append(copy.deepcopy(batch['action']))
         self.sampler.ignore_rgb(False)
 
         for key in data_cache.keys():
             data_cache[key] = np.concatenate(data_cache[key])
-            assert data_cache[key].shape[0] == len(self.sampler)
-            assert len(data_cache[key].shape) == 3
-            B, T, D = data_cache[key].shape
-            # if not self.temporally_independent_normalization:
-            data_cache[key] = data_cache[key].reshape(B*T, D)
+            assert data_cache[key].shape[0] == len(self.sampler) # obs -> action 쌍 수
+            
+            if key in self.lowdim_keys or key == 'action':
+                assert len(data_cache[key].shape) == 3 
+                B, T, D = data_cache[key].shape
+                data_cache[key] = data_cache[key].reshape(B*T, D)
+
+            elif key in self.wrench_keys:
+                assert len(data_cache[key].shape) == 4
+                B, T, C, H = data_cache[key].shape
+                data_cache[key] = data_cache[key].reshape(B*T, C, H)
+            
 
 
         # Action에 normalizer
@@ -219,11 +230,11 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
 
         # (양팔) : robot_pose_L(3), robot_rot6d_L(6), robot_pose_R(3), robot_rot6d_R(6)
 
-        # (왼팔, 왼핸드) : robot_pose_L(3), robot_rot6d_L(6), hand_pose_L(?)
-        # (오른팔, 오른핸드) : robot_pose_R(3), robot_rot6d_R(6), hand_pose_R(?)
+        # (왼팔, 왼핸드) : robot_pose_L(3), robot_rot6d_L(6), hand_pose_L(n)
+        # (오른팔, 오른핸드) : robot_pose_R(3), robot_rot6d_R(6), hand_pose_R(n)
 
         # (양팔, 양핸드) : robot_pose_L(3), robot_rot6d_L(6), robot_pose_R(3), 
-        #                   robot_rot6d_R(6), hand_pose_L(?), hand_pose_R(?)
+        #                   robot_rot6d_R(6), hand_pose_L(n), hand_pose_R(n)
         
         action_normalizers = list()
         action_index = 0 
@@ -253,6 +264,9 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
         
         normalizer['action'] = concatenate_normalizer(action_normalizers)
 
+        print("action_normalizers scale:", normalizer['action'].params_dict['scale'].data)
+        print("action_normalizers offset:", normalizer['action'].params_dict['offset'].data)
+
 
         # obs
         for key in self.lowdim_keys:
@@ -264,7 +278,7 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
                 this_normalizer = get_identity_normalizer_from_stat(stat)
             elif key.endswith('qpos'):
                 this_normalizer = get_range_normalizer_from_stat(stat)
-            elif 'wrench' in key or 'force' in key or 'torque' in key:   # 힘, 토크
+            elif 'wrench' in key or 'force' in key or 'torque' in key:   
                 this_normalizer = get_range_normalizer_from_stat(stat)
             else:
                 print("UNKNOWN KEY in get_normalizer", key)
@@ -275,15 +289,22 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
 
             print(f"obs normalize scale for {key}:", normalizer[key].params_dict['scale'].data)
             print(f"obs normalize offset for {key}:", normalizer[key].params_dict['offset'].data)
-        
-        print("action_normalizers scale:", normalizer['action'].params_dict['scale'].data)
-        print("action_normalizers offset:", normalizer['action'].params_dict['offset'].data)
-        
+
+        # wrench
+        for key in self.wrench_keys:
+            stat = array_to_stats_for_wrench(data_cache[key], history=H)
+            this_normalizer = get_range_normalizer_from_stat(stat)
+
+            normalizer[key] = this_normalizer
+            
+            print(f"obs normalize scale for {key}:", normalizer[key].params_dict['scale'].data.reshape(-1, H)[:, 0])
+            print(f"obs normalize offset for {key}:", normalizer[key].params_dict['offset'].data.reshape(-1, H)[:, 0])
         
         # image
         for key in self.rgb_keys:
             normalizer[key] = get_image_range_normalizer()
         return normalizer
+
 
     def get_all_actions(self) -> torch.Tensor:
         return torch.from_numpy(self.replay_buffer['action'])
@@ -316,6 +337,8 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
             obs_dict[key] = data[key][T_slice].astype(np.float32)
             del data[key]
 
+        for key in self.wrench_keys:
+            obs_dict[key] = data[key][T_slice][-1:].astype(np.float32) # wrench n_obs = 1
 
 
 
@@ -464,6 +487,7 @@ def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, ro
     # parse shape_meta
     rgb_keys = list()
     lowdim_keys = list()
+    wrench_keys = list()
     # construct compressors and chunks
     obs_shape_meta = shape_meta['obs']
     for key, attr in obs_shape_meta.items():
@@ -473,6 +497,8 @@ def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, ro
             rgb_keys.append(key)
         elif type == 'low_dim':
             lowdim_keys.append(key)
+        elif type == 'wrench':
+            wrench_keys.append(key)
     
     root = zarr.group(store)
     data_group = root.require_group('data', overwrite=True)
@@ -495,7 +521,7 @@ def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, ro
             dtype=np.int64, compressor=None, overwrite=True)
 
         # save lowdim data; low_dim 별로 일렬로 나열하기
-        for key in tqdm(lowdim_keys + ['action'], desc="Loading lowdim data"):
+        for key in tqdm(lowdim_keys + wrench_keys + ['action'], desc="Loading lowdim data"):
             data_key = 'obs/' + key
             if key == 'action':
                 data_key = 'actions'
@@ -516,6 +542,7 @@ def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, ro
                 #     assert this_data.shape == (n_steps,) + tuple(shape_meta['obs'][key]['raw_shape'])
                 # else:
                 #     assert this_data.shape == (n_steps,) + tuple(shape_meta['obs'][key]['shape'])
+                print(f"this_data shape for {key}:", this_data.shape)
                 assert this_data.shape == (n_steps,) + tuple(shape_meta['obs'][key]['shape'])
             
             _ = data_group.array(

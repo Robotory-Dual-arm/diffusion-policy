@@ -5,7 +5,7 @@ import time
 import shutil
 import math
 from multiprocessing.managers import SharedMemoryManager
-from diffusion_policy.real_world.rightarm_hand_without_wrench_interpolation_controller import DualarmInterpolationController # 듀얼암 + 핸드
+from diffusion_policy.real_world.rightarm_hand_with_wrench_encoder_interpolation_controller import DualarmInterpolationController # 듀얼암 + 핸드
 from diffusion_policy.real_world.multi_realsense import MultiRealsense, SingleRealsense
 from diffusion_policy.real_world.video_recorder import VideoRecorder
 from diffusion_policy.common.timestamp_accumulator import (
@@ -18,16 +18,7 @@ from diffusion_policy.common.replay_buffer import ReplayBuffer
 from diffusion_policy.common.cv2_util import (
     get_image_transform, optimal_row_cols)
 
-# DEFAULT_OBS_KEY_MAP = {    # 바꾸기!
-#     # robot
-#     'ActualTCPPose': 'robot_eef_pose',
-#     'ActualTCPSpeed': 'robot_eef_pose_vel',
-#     'ActualQ': 'robot_joint',
-#     'ActualQd': 'robot_joint_vel',
-#     # timestamps
-#     'step_idx': 'step_idx',
-#     'timestamp': 'timestamp'
-# }
+
 DEFAULT_OBS_KEY_MAP = {
     # robot
     'robot_pose_L': 'robot_pose_L',
@@ -36,6 +27,14 @@ DEFAULT_OBS_KEY_MAP = {
     'robot_quat_R': 'robot_quat_R',
     'hand_pose_L': 'hand_pose_L',
     'hand_pose_R': 'hand_pose_R',
+
+    'wrench_wrist_L': 'wrench_wrist_L',
+    'wrench_thumb_L': 'wrench_thumb_L',
+    'wrench_index_L': 'wrench_index_L',
+    'wrench_middle_L': 'wrench_middle_L',
+    'wrench_ring_L': 'wrench_ring_L',
+    'wrench_baby_L': 'wrench_baby_L',
+    
     'wrench_wrist_R': 'wrench_wrist_R',
     'wrench_thumb_R': 'wrench_thumb_R',
     'wrench_index_R': 'wrench_index_R',
@@ -54,10 +53,11 @@ class DualarmRealEnv:
             output_dir,  
             robot_ip,   
             # env params
-            frequency=20,
+            frequency=10, # 로봇 traj 주기
             n_obs_steps=2,
             # obs
-            obs_image_resolution=(320.240),
+            shape_meta=None,
+            obs_image_resolution=(224, 224),
             max_obs_buffer_size=30,
             camera_serial_numbers=None,
             # camera_serial_numbers=None,
@@ -72,7 +72,7 @@ class DualarmRealEnv:
             # video capture params
             video_capture_fps=30,
             # video_capture_resolution=(1280,720),
-            video_capture_resolution=(640,480),   
+            video_capture_resolution=(224,224),   
             # saving params
             record_raw_video=False,   
             thread_per_video=2,
@@ -80,7 +80,7 @@ class DualarmRealEnv:
             # vis params
             enable_multi_cam_vis=False,   
             # multi_cam_vis_resolution=(1280,720),
-            multi_cam_vis_resolution=(320,240),
+            multi_cam_vis_resolution=(224,224),
             # shared memory
             shm_manager=None
             ):
@@ -210,7 +210,8 @@ class DualarmRealEnv:
             soft_real_time=False,
             verbose=False,
             receive_keys=None,
-            get_max_k=max_obs_buffer_size
+            get_max_k=max_obs_buffer_size,
+            shape_meta=shape_meta
             )
         self.realsense = realsense
         self.robot = robot
@@ -234,6 +235,39 @@ class DualarmRealEnv:
         self.stage_accumulator = None
 
         self.start_time = None
+
+        self.shape_meta = shape_meta
+        obs_shape_meta = shape_meta['obs']
+
+        rgb_keys = []
+        low_dim_keys = []
+        wrench_keys = []
+
+        key_shape_map = dict()
+        for key, attr in obs_shape_meta.items():
+            shape = attr['shape']
+            type = attr.get('type', 'low_dim')
+
+            key_shape_map[key] = shape
+            
+            if type == 'rgb':
+                rgb_keys.append(key)   
+                                
+            elif type == 'low_dim':
+                low_dim_keys.append(key)
+
+            elif type == 'wrench':
+                wrench_keys.append(key)
+
+            else:
+                raise RuntimeError(f"Unsupported obs type: {type}")
+        
+        self.rgb_keys = rgb_keys
+        self.low_dim_keys = low_dim_keys
+        self.wrench_keys = wrench_keys
+        self.key_shape_map = key_shape_map
+        
+        
     
     # ======== start-stop API =============
     @property
@@ -285,20 +319,20 @@ class DualarmRealEnv:
 
         # get data
         # 30 Hz, camera_receive_timestamp
-        k = math.ceil(self.n_obs_steps * (self.video_capture_fps / self.frequency))
+        k = math.ceil(self.n_obs_steps * (self.video_capture_fps / self.frequency)) # 30hz 이미지 0.2초 = 6장
         self.last_realsense_data = self.realsense.get(
             k=k, 
             out=self.last_realsense_data)
 
         # 125 hz, robot_receive_timestamp
-        last_robot_data = self.robot.get_all_state()   
+        last_robot_data = self.robot.get_all_state()   # 남은거 긁어옴
         # both have more than n_obs_steps data
 
         # align camera obs timestamps
         dt = 1 / self.frequency
-        last_timestamp = np.max([x['timestamp'][-1] for x in self.last_realsense_data.values()])
-        obs_align_timestamps = last_timestamp - (np.arange(self.n_obs_steps)[::-1] * dt)
-        # 카메라 obs 데이터 얻기
+        last_timestamp = np.max([x['timestamp'][-1] for x in self.last_realsense_data.values()]) # 최신 이미지 시간
+        obs_align_timestamps = last_timestamp - (np.arange(self.n_obs_steps)[::-1] * dt) # [last - 0.1, last]
+
         camera_obs = dict()
         for camera_idx, value in self.last_realsense_data.items():
             this_timestamps = value['timestamp']
@@ -310,22 +344,19 @@ class DualarmRealEnv:
                     this_idx = is_before_idxs[-1]
                 this_idxs.append(this_idx)
             # remap key
-            # camera_obs[f'camera_{camera_idx}'] = value['color'][this_idxs]
             camera_obs[f'image{camera_idx}'] = value['color'][this_idxs]
             
-        # 로봇 obs 데이터 얻기
         # align robot obs
         robot_timestamps = last_robot_data['robot_receive_timestamp']
         this_timestamps = robot_timestamps
         this_idxs = list()
-        for t in obs_align_timestamps:
+        for t in obs_align_timestamps: # [current-0.1, current]
             is_before_idxs = np.nonzero(this_timestamps < t)[0]
             this_idx = 0
             if len(is_before_idxs) > 0:
                 this_idx = is_before_idxs[-1]
             this_idxs.append(this_idx)
 
-       
         robot_obs_raw = dict()
         for k, v in last_robot_data.items():
             if k in self.obs_key_map:
@@ -333,18 +364,30 @@ class DualarmRealEnv:
         
         robot_obs = dict()
         for k, v in robot_obs_raw.items():
-            robot_obs[k] = v[this_idxs]
+            robot_obs[k] = v[this_idxs] # 그 시간의 데이터 저장 ex) robot_obs['robot_pose_L'] = [[x1,y1,z1], [x2,y2,z2]]
 
-        # accumulate obs; Accumulator 사용
+        # accumulate obs
         if self.obs_accumulator is not None:
             self.obs_accumulator.put(
                 robot_obs_raw,
                 robot_timestamps
             )
 
+        # Wrench 32-frame obs        
+        try:
+            wrench_hist_dict = self.robot.dualarm_node.get_wrench_hist_32(shape_meta=self.shape_meta)
+        except (AttributeError, Exception):
+            # Fallback if node not yet initialized or other error
+            wrench_hist_dict = {}
+            for wrench_key in self.wrench_keys:
+                wrench_shape = self.key_shape_map.get(wrench_key, (6, 32))  # Default (6, 32)
+                wrench_axis = wrench_shape[0]  # Get actual axis count
+                wrench_hist_dict[wrench_key] = np.zeros((wrench_axis, 32), dtype=np.float32)
+
         # return obs
         obs_data = dict(camera_obs)
         obs_data.update(robot_obs)
+        obs_data.update(wrench_hist_dict) 
         obs_data['timestamp'] = obs_align_timestamps
         return obs_data
     

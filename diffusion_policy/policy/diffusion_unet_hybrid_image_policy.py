@@ -103,6 +103,9 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
                         modality.obs_randomizer_kwargs.crop_height = ch
                         modality.obs_randomizer_kwargs.crop_width = cw
 
+            # image당 feature_dim 설정
+            # config.observation.encoder.rgb.core_kwargs.feature_dimension = 128
+
         # init global state
         ObsUtils.initialize_obs_utils_with_config(config)
 
@@ -314,7 +317,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         assert 'valid_mask' not in batch
 
         # 이미지 augmentation!!!!!!!!!!!!!!!
-        transform = T.Compose([T.ColorJitter(brightness=0.3, contrast=0.4, saturation=0.4, hue=0.07),
+        transform = T.Compose([T.ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5, hue=0.08),
                                T.RandomGrayscale(p=0.005)])
         num_image = len([key for key in batch['obs'].keys() if 'image' in key])
         for i in range(num_image):
