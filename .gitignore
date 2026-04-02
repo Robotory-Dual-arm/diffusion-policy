@@ -6,6 +6,7 @@ data
 data_local
 .vscode
 _wandb
+action_denoising_results
 
 **/.DS_Store
 
