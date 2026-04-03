@@ -77,6 +77,8 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             else:
                 raise RuntimeError(f"Unsupported obs type: {type}")
         # obs_config에 'low_dim': ['agent_pos'], 'rgb': ['image'] 이런식으로 들어감
+        self.rgb_obs_keys = tuple(obs_config['rgb'])
+        self.low_dim_obs_keys = tuple(obs_config['low_dim'])
 
         # robomimic에서 Image Encoder만 가져와 사용; square task, bc_rnn의 image encoder 구조
         # get raw robomimic config
@@ -147,10 +149,8 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
                     pos_enc=x.pos_enc
                 )
             )
-        print(';;;;;;;;;;;;;;;;;;;;;;;;;;')
-        print(obs_encoder.obs_shapes)
-        print(obs_encoder.obs_nets)
-        print(';;;;;;;;;;;;;;;;;;;;;;;;;;')
+        self.num_test = 0
+        
         # Diffusion Model 시작 ==================================================
         # create diffusion model
         obs_feature_dim = obs_encoder.output_shape()[0] # image * 64 + low_dim * 1
@@ -202,39 +202,88 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
     # ========= inference  ============
     def conditional_sample(self, 
             condition_data, condition_mask,
-            local_cond=None, global_cond=None,
+            local_cond=None, global_cond=None, 
             generator=None,
             # keyword arguments to scheduler.step
             **kwargs
             ):
         model = self.model   # Unet
         scheduler = self.noise_scheduler
-
+        f1 = open(f"action_denoising_results/action_denoising_traj_{self.num_test}.txt", "w")
+        f2 = open(f"action_denoising_results/action_denoising_traj_{self.num_test}_change_obs_30.txt", "w")
         trajectory = torch.randn(
             size=condition_data.shape, 
             dtype=condition_data.dtype,
             device=condition_data.device,
             generator=generator)
-    
+        # f1.write(f"initial noise trajectory: \n{trajectory}\n")
+        # f2.write(f"initial noise trajectory: \n{trajectory}\n") 
         # set step values
         scheduler.set_timesteps(self.num_inference_steps)
 
+        self.first_tree = False
+        # [90, 84, 78, 72, 66, 60, 54, 48, 42, 36, 30, 24, 18, 12,  6,  0]
+        restart_t = 18
+        t0 = time.monotonic()
         for t in scheduler.timesteps:
+            
             # 1. apply conditioning; obs_as_global_cond=False일때 condition data 설정
             trajectory[condition_mask] = condition_data[condition_mask]
 
             # 2. predict model output; noise 예측(traj랑 같은 dim)
             model_output = model(trajectory, t, 
                 local_cond=local_cond, global_cond=global_cond)
-
+            
             # 3. compute previous image: x_t -> x_t-1
             trajectory = scheduler.step(
                 model_output, t, trajectory, 
                 generator=generator,
                 **kwargs
                 ).prev_sample
+            if t <= restart_t:
+                f1.write(f"timestep {t}, trajectory: \n{trajectory}\n")
+            # if t > restart_t:
+            #     f2.write(f"timestep {t}, trajectory: \n{trajectory}\n")
+        t1 = time.monotonic() 
+        restart_idx = (scheduler.timesteps == restart_t).nonzero(as_tuple=True)[0].item()
         
+        # restart_t = torch.tensor(restart_t, device=trajectory.device).long()
+        restart_t = torch.tensor(30, device=trajectory.device).long()
+
+        trajectory_tree = self.noise_scheduler.add_noise(
+            trajectory,
+            torch.randn(trajectory.shape, device=trajectory.device),
+            restart_t
+        )
+        t2 = time.monotonic()
+        # breakpoint()
+        for t in scheduler.timesteps[restart_idx:]:
+            
+            # 1. apply conditioning; obs_as_global_cond=False일때 condition data 설정
+            trajectory_tree[condition_mask] = condition_data[condition_mask]
+
+            # 2. predict model output; noise 예측(traj랑 같은 dim)
+            model_output = model(trajectory_tree, t, 
+                local_cond=local_cond, global_cond=global_cond)
+            
+            # 3. compute previous image: x_t -> x_t-1
+            trajectory_tree = scheduler.step(
+                model_output, t, trajectory_tree, 
+                generator=generator,
+                **kwargs
+                ).prev_sample
+            
+            f2.write(f"timestep {t}, trajectory: \n{trajectory_tree}\n")
+        t3 = time.monotonic()
+
+        # print('100 time', t1-t0)
+        # print('25 time', t3-t2)
+        # breakpoint()
+        f1.close()
+        f2.close()
+        self.num_test += 1
         # finally make sure conditioning is enforced
+        # trajectory_tree[condition_mask] = condition_data[condition_mask]
         trajectory[condition_mask] = condition_data[condition_mask]        
 
         return trajectory
@@ -263,14 +312,25 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         # handle different ways of passing observation
         local_cond = None
         global_cond = None
+        self.global_cond_tree = None
         if self.obs_as_global_cond:   # True
             # condition through global feature
             this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:]))
             # print('this_nobs.size:', {k: v.size() for k, v in this_nobs.items()})
 
             nobs_features = self.obs_encoder(this_nobs)   # image, joint encoding
+            
             # reshape back to B, Do
             global_cond = nobs_features.reshape(B, -1)
+
+            # low_dim observation만 랜덤하게 바꾸고 image observation은 그대로 유지
+            this_nobs_tree = {
+                key: torch.randn_like(value) if key in self.low_dim_obs_keys else value
+                for key, value in this_nobs.items()
+            }
+            nobs_features_tree = self.obs_encoder(this_nobs_tree)
+            self.global_cond_tree = nobs_features_tree.reshape(B, -1)
+
             # empty data for action
             cond_data = torch.zeros(size=(B, T, Da), device=device, dtype=dtype)
             cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)

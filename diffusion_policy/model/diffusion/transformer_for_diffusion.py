@@ -36,21 +36,21 @@ class TransformerForDiffusion(ModuleAttrMixin):
             T += 1
             T_cond -= 1
         obs_as_cond = cond_dim > 0
-        if obs_as_cond: # True
+        if obs_as_cond: # True, cross attention
             assert time_as_cond
-            T_cond += n_obs_steps
+            T_cond += n_obs_steps # timestep token + obs tokens
 
         # input embedding stem
-        self.input_emb = nn.Linear(input_dim, n_emb)
+        self.input_emb = nn.Linear(input_dim, n_emb) # (T, action_dim) -> (T, n_emb)
         self.pos_emb = nn.Parameter(torch.zeros(1, T, n_emb))
         self.drop = nn.Dropout(p_drop_emb)
 
         # cond encoder
-        self.time_emb = SinusoidalPosEmb(n_emb)
+        self.time_emb = SinusoidalPosEmb(n_emb) # denoising timestep; 1 token
         self.cond_obs_emb = None
         
         if obs_as_cond:
-            self.cond_obs_emb = nn.Linear(cond_dim, n_emb)
+            self.cond_obs_emb = nn.Linear(cond_dim, n_emb) # (To, obs_dim) -> (To, n_emb)
 
         self.cond_pos_emb = None
         self.encoder = None
@@ -58,6 +58,7 @@ class TransformerForDiffusion(ModuleAttrMixin):
         encoder_only = False
         if T_cond > 0: # True
             self.cond_pos_emb = nn.Parameter(torch.zeros(1, T_cond, n_emb))
+            # encoder : condition 끼리 attention
             if n_cond_layers > 0: # 0 
                 encoder_layer = nn.TransformerEncoderLayer(
                     d_model=n_emb,
@@ -78,7 +79,7 @@ class TransformerForDiffusion(ModuleAttrMixin):
                     nn.Mish(),
                     nn.Linear(4 * n_emb, n_emb)
                 )
-            # decoder
+            # decoder : action self attention + cross attention to condition
             decoder_layer = nn.TransformerDecoderLayer(
                 d_model=n_emb,
                 nhead=n_head,
@@ -92,7 +93,7 @@ class TransformerForDiffusion(ModuleAttrMixin):
                 decoder_layer=decoder_layer,
                 num_layers=n_layer
             )
-        else:
+        else: # False
             # encoder only BERT
             encoder_only = True
 
@@ -121,13 +122,13 @@ class TransformerForDiffusion(ModuleAttrMixin):
             self.register_buffer("mask", mask)
             
             if time_as_cond and obs_as_cond:
-                S = T_cond
+                S = T_cond # time token + obs tokens
                 t, s = torch.meshgrid(
                     torch.arange(T),
                     torch.arange(S),
                     indexing='ij'
                 )
-                mask = t >= (s-1) # add one dimension since time is the first token in cond
+                mask = t >= (s-1) # add one dimension since time is the first token in cond; time token이 맨앞
                 mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
                 self.register_buffer('memory_mask', mask)
             else:
@@ -329,7 +330,7 @@ class TransformerForDiffusion(ModuleAttrMixin):
             ]  # each position maps to a (learnable) vector
             x = self.drop(token_embeddings + position_embeddings)
             # (B,T,n_emb)
-            x = self.decoder(
+            x = self.decoder( # action self attention + cross attention to condition
                 tgt=x,
                 memory=memory,
                 tgt_mask=self.mask,

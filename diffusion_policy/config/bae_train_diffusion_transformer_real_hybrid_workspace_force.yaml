@@ -2,8 +2,8 @@ defaults:
   - _self_
   - task: real_pusht_image
 
-name: train_diffusion_unet_hybrid
-_target_: diffusion_policy.workspace.train_diffusion_unet_hybrid_workspace.TrainDiffusionUnetHybridWorkspace
+name: train_diffusion_transformer_hybrid
+_target_: diffusion_policy.workspace.train_diffusion_transformer_hybrid_workspace.TrainDiffusionTransformerHybridWorkspace
 
 task_name: ${task.name}
 shape_meta: ${task.shape_meta}
@@ -16,10 +16,10 @@ n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
 keypoint_visible_rate: 1.0
-obs_as_global_cond: True
+obs_as_cond: True
 
 policy:
-  _target_: diffusion_policy.policy.bae_diffusion_unet_hybrid_image_wrench_encoder_policy.DiffusionUnetHybridImagePolicy
+  _target_: diffusion_policy.policy.diffusion_transformer_hybrid_image_wrench_encoder_policy.DiffusionTransformerHybridImagePolicy
 
   shape_meta: ${shape_meta}
   
@@ -31,7 +31,7 @@ policy:
     beta_end: 0.02
     # beta_schedule is important
     # this is the best we found
-    beta_schedule: squaredcos_cap_v2    # beta_start, beta_end 안쓰임
+    beta_schedule: squaredcos_cap_v2
     clip_sample: True
     set_alpha_to_one: True
     steps_offset: 0
@@ -41,18 +41,25 @@ policy:
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
   num_inference_steps: 16
-  obs_as_global_cond: ${obs_as_global_cond}
-  
-  diffusion_step_embed_dim: 256
-  down_dims: [256,512,1024]
-  kernel_size: 5
-  n_groups: 8
-  cond_predict_scale: True
 
-  
+  # crop_shape: [216, 288] # ch, cw 320x240 90%
+  # obs_encoder_group_norm: True
+  # eval_fixed_crop: True
+
+  n_layer: 8
+  n_cond_layers: 0  # >0: use transformer encoder for cond, otherwise use MLP
+  n_head: 4
+  n_emb: 256 # token 
+  p_drop_emb: 0.0
+  p_drop_attn: 0.2 # 0.3
+  causal_attn: True
+  time_as_cond: True # if false, use BERT like encoder only arch, time as input
+  obs_as_cond: ${obs_as_cond}
+
+  # scheduler.step params
+  # predict_epsilon: True
   pose_repr: ${task.pose_repr}
-
-
+  
   obs_encoder:
     fuse_mode: modality-attention # modality-attention or concat
     position_encoding: learnable
@@ -86,8 +93,7 @@ policy:
     force_encoder_cfg:
       model_name: causalconv # causalconv or gru
       feature_dim: 512 # vision_feature_dim 이랑 맞춰줘야 modality-attention 가능
-  
-
+      
 ema:
   _target_: diffusion_policy.model.diffusion.ema_model.EMAModel
   update_after_step: 0
@@ -97,25 +103,24 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  batch_size: 16
-  num_workers: 16
+  batch_size: 64
+  num_workers: 8
   shuffle: True
   pin_memory: True
   persistent_workers: True
 
 val_dataloader:
-  batch_size: 1
-  num_workers: 1
+  batch_size: 64
+  num_workers: 8
   shuffle: False
   pin_memory: True
   persistent_workers: True
 
 optimizer:
-  _target_: torch.optim.AdamW
-  lr: 1.0e-4
-  betas: [0.95, 0.999]
-  eps: 1.0e-8
-  weight_decay: 1.0e-6
+  transformer_weight_decay: 1.0e-3
+  obs_encoder_weight_decay: 1.0e-6
+  learning_rate: 1.0e-4
+  betas: [0.9, 0.95]
 
 training:
   device: "cuda:0"
@@ -124,8 +129,9 @@ training:
   resume: True
   # optimization
   lr_scheduler: cosine
+  # Transformer needs LR warmup
   lr_warmup_steps: 500
-  num_epochs: 1000
+  num_epochs: 2000
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
