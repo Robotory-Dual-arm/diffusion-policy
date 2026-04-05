@@ -42,7 +42,8 @@ policy:
   n_obs_steps: ${n_obs_steps}
   num_inference_steps: 8
 
-  crop_shape: [216, 288] # ch, cw 320x240 90%
+  #crop_shape: [216, 288] # ch, cw 320x240 90%
+  crop_shape: [210, 210]
   obs_encoder_group_norm: True
   eval_fixed_crop: True
 
@@ -68,14 +69,14 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  batch_size: 64
+  batch_size: 16
   num_workers: 8
   shuffle: True
   pin_memory: True
   persistent_workers: True
 
 val_dataloader:
-  batch_size: 64
+  batch_size: 16
   num_workers: 8
   shuffle: False
   pin_memory: True

@@ -262,7 +262,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
                 self.position_embedding = torch.nn.Parameter(
                     torch.randn(n_features, vision_feature_dim))
                 
-                                                   
+        self.low_dim_encoder = nn.Linear(self.num_low_dim_component, vision_feature_dim)
         
         # Diffusion Model 시작 ==================================================
         # create diffusion model
@@ -556,10 +556,11 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             modality_features.append(vision_feature.reshape(B, To, -1)) # (B, To, vision_feature_dim)
 
         # low-dim encoding (identity)
-        low_dim_features = []
-        for key in self.low_dim_keys:
-            low_dim_features.append(this_nobs[key].reshape(B, -1))
+        # low_dim_features = []
+        # for key in self.low_dim_keys:
+        #     low_dim_features.append(this_nobs[key].reshape(B, -1))
         
+
         # Force encoding
         force_features = []
         combined_wrench_data = []
@@ -574,17 +575,18 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         
         # fuse mode
         if self.fuse_mode == 'modality-attention':
-            in_embeds = torch.cat(modality_features, dim=1)
+            in_embeds = torch.cat(modality_features, dim=1) # (B, feature_num, feature_dim)
             if self.position_encoding == 'learnable':
                 if self.position_embedding.device != in_embeds.device:
                     self.position_embedding = self.position_embedding.to(in_embeds.device)
                 in_embeds = in_embeds + self.position_embedding
-            out_embeds = self.transformer_encoder(in_embeds)
-            out_embeds = torch.cat(
+            out_embeds = self.transformer_encoder(in_embeds) # (B, feature_num, feature_dim)
+            out_embeds = torch.cat( # (B, feature_num*feature_dim)
                 [out_embeds[:,i] for i in range(out_embeds.shape[1])], dim=1
             )
-            projected_embeds = self.linear_projection(out_embeds)
-            nobs_features = torch.cat([projected_embeds, torch.cat(low_dim_features, dim=-1)], dim=1)
+            projected_embeds = self.linear_projection(out_embeds) # (B, obs_feature_dim)
+            nobs_features = torch.cat([projected_embeds, torch.cat(low_dim_features, dim=-1)], dim=1) # (B, obs_feature_dim + low_dim_feature_dim)
+
         elif self.fuse_mode == 'concat':
             nobs_features = torch.cat(vision_features + low_dim_features + force_features, dim=-1)
         

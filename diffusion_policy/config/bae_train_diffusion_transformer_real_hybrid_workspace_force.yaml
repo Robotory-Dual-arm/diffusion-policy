@@ -49,7 +49,7 @@ policy:
   n_layer: 8
   n_cond_layers: 0  # >0: use transformer encoder for cond, otherwise use MLP
   n_head: 4
-  n_emb: 256 # token 
+  n_emb: 512 # token 밑에 vision, force feature랑 맞춰야된다
   p_drop_emb: 0.0
   p_drop_attn: 0.2 # 0.3
   causal_attn: True
@@ -103,14 +103,14 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  batch_size: 64
+  batch_size: 16
   num_workers: 8
   shuffle: True
   pin_memory: True
   persistent_workers: True
 
 val_dataloader:
-  batch_size: 64
+  batch_size: 16
   num_workers: 8
   shuffle: False
   pin_memory: True
@@ -131,7 +131,7 @@ training:
   lr_scheduler: cosine
   # Transformer needs LR warmup
   lr_warmup_steps: 500
-  num_epochs: 2000
+  num_epochs: 1000
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.

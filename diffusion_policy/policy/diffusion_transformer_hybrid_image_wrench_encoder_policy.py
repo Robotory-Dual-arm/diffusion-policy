@@ -11,7 +11,7 @@ import timm
 
 from diffusion_policy.model.common.normalizer import LinearNormalizer
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
-from diffusion_policy.model.diffusion.transformer_for_diffusion import TransformerForDiffusion
+from diffusion_policy.model.diffusion.bae_transformer_for_diffusion_force import TransformerForDiffusion
 from diffusion_policy.model.diffusion.mask_generator import LowdimMaskGenerator
 from diffusion_policy.common.robomimic_config_util import get_robomimic_config
 from robomimic.algo import algo_factory
@@ -33,8 +33,8 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             horizon, 
             n_action_steps, 
             n_obs_steps,
-            num_inference_steps=None,
             obs_encoder: DictConfig,
+            num_inference_steps=None,
             # image
             # crop_shape=(76, 76),
             # obs_encoder_group_norm=False,
@@ -208,6 +208,10 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             )
         force_feature_dim = fc.feature_dim
 
+        ### Low-dim encoder
+        self.low_dim_encoder = nn.Linear(self.num_low_dim_component, vision_feature_dim)
+
+
         # fuse mode
         if obs_encoder.fuse_mode == 'modality-attention':
             self.transformer_encoder = torch.nn.TransformerEncoderLayer(
@@ -217,7 +221,7 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
                 batch_first=True,
                 dropout=0.0,
             )
-            n_features = len(rgb_keys) * n_obs_steps + 1 # vision + force features
+            n_features = (len(rgb_keys) + 1) * n_obs_steps + 1 # vision + low_dim + force features
             self.linear_projection = nn.Linear(vision_feature_dim*n_features, vision_feature_dim)
             
             if obs_encoder.position_encoding == 'learnable':
@@ -228,10 +232,10 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         # Diffusion Model 시작 ========================================
         # create diffusion model
         if obs_encoder.fuse_mode == 'modality-attention':
-            obs_feature_dim = vision_feature_dim + self.num_low_dim_component * n_obs_steps
-        elif obs_encoder.fuse_mode == 'concat':
-            obs_feature_dim = vision_feature_dim * self.num_image * n_obs_steps \
-                                + self.num_low_dim_component * n_obs_steps + force_feature_dim
+            obs_feature_dim = vision_feature_dim 
+        # elif obs_encoder.fuse_mode == 'concat':
+        #     obs_feature_dim = vision_feature_dim * self.num_image * n_obs_steps \
+        #                         + self.num_low_dim_component * n_obs_steps + force_feature_dim
 
         if obs_as_cond: # True
             input_dim = action_dim
@@ -240,23 +244,24 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             input_dim = obs_feature_dim + action_dim
             cond_dim = 0
         output_dim = input_dim
-     
+
+
         # Transformer 
         model = TransformerForDiffusion(
-            input_dim=input_dim,
-            output_dim=output_dim,
-            horizon=horizon,
-            n_obs_steps=n_obs_steps,
-            cond_dim=cond_dim,
-            n_layer=n_layer,
+            input_dim=input_dim, # action dim
+            output_dim=output_dim, # action dim
+            horizon=horizon, # action horizon
+            n_obs_steps=n_obs_steps, # To
+            # cond_dim=cond_dim, # obs feature dim
+            n_layer=n_layer, 
             n_head=n_head,
-            n_emb=n_emb,
+            n_emb=n_emb, # token dim
             p_drop_emb=p_drop_emb,
             p_drop_attn=p_drop_attn,
             causal_attn=causal_attn,
             time_as_cond=time_as_cond,
             obs_as_cond=obs_as_cond,
-            n_cond_layers=n_cond_layers
+            n_cond_layers=n_cond_layers,
         )
 
         self.obs_encoder = obs_encoder
@@ -289,11 +294,13 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         self.key_shape_map = key_shape_map
         self.fuse_mode = obs_encoder.fuse_mode
         self.position_encoding = obs_encoder.position_encoding
-
+        self.feature_aggregation = vc.feature_aggregation
 
         if num_inference_steps is None:
             num_inference_steps = noise_scheduler.config.num_train_timesteps
         self.num_inference_steps = num_inference_steps
+
+        
 
         print("Diffusion params: %e" % sum(p.numel() for p in self.model.parameters()))
         print("Vision Encoder params: %e" % sum(p.numel() for p in self.vision_encoder.parameters()))
@@ -382,48 +389,65 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             img = this_nobs[key]
             assert img.shape[1:] == self.key_shape_map[key]
             raw_vision_feature = self.vision_encoder(img) # (B*To, vision_feature_dim, n, n)
-            
             # resnet
             if self.vision_model_name.startswith('resnet'):
-                vision_feature = self.attention_pool_2d(raw_vision_feature) # (B*To, vision_feature_dim)
+                if self.feature_aggregation == 'attention_pool_2d':
+                    vision_feature = self.attention_pool_2d(raw_vision_feature) # (B*To, vision_feature_dim)
+                # elif self.feature_aggregation == 'adaptive_avg_pool_2d':
+                #     AdaptiveAvgPool2d((k, k))  ->  spatial 정보 조금 남길수있음
             # ViT
             else:
                 vision_feature = raw_vision_feature[:, 0, :]   # CLS token
             vision_features.append(vision_feature.reshape(B, -1)) # (B, To*vision_feature_dim)
             modality_features.append(vision_feature.reshape(B, To, -1)) # (B, To, vision_feature_dim)
 
-        # low-dim encoding (identity)
+        # low-dim encoding (linear)
         low_dim_features = []
-        for key in self.low_dim_keys:
-            low_dim_features.append(this_nobs[key].reshape(B, -1))
+        for t in range(To):
+            low_dim_t = torch.cat([nobs[key][:,t,:] for key in self.low_dim_keys], dim=-1)
+            low_dim_feature_t = self.low_dim_encoder(low_dim_t)
+            low_dim_features.append(low_dim_feature_t.reshape(B, -1))
+        low_dim_features = torch.stack(low_dim_features, dim=1)  # (B, To, low_dim_feature_dim)
+        modality_features.append(low_dim_features)
+        # [(B, To, vision_feature_dim), (B, To, vision_feature_dim), 
+        #  (B, To, low_dim_feature_dim)]   이미지 2개 + low-dim
 
         # Force encoding
         force_features = []
         combined_wrench_data = []
         for key in self.wrench_keys:
             combined_wrench_data.append(wrench_nobs[key]) # (B, To=1, wrench_axis, wrench_hist)
-
         wrench_total = torch.cat(combined_wrench_data, dim=-2) # (B, To=1, num_wrench_component, wrench_hist)
         force_feature = self.force_encoder(wrench_total.reshape(-1, *wrench_total.shape[-2:])) # (B, 1, feature_dim)
         force_features.append(force_feature.reshape(B, -1)) # (B, feature_dim)
         modality_features.append(force_feature) # (B, 1, feature_dim)
+        # [(B, To, vision_feature_dim), (B, To, vision_feature_dim), 
+        #  (B, To, low_dim_feature_dim), 
+        #  (B, 1, force_feature_dim)]    이미지 2개 + low-dim + force (force는 To=1)
 
 
         # fuse mode
         if self.fuse_mode == 'modality-attention':
-            in_embeds = torch.cat(modality_features, dim=1)
+            in_embeds = torch.cat(modality_features, dim=1) # (B, feature_num, feature_dim)
             if self.position_encoding == 'learnable':
                 if self.position_embedding.device != in_embeds.device:
                     self.position_embedding = self.position_embedding.to(in_embeds.device)
                 in_embeds = in_embeds + self.position_embedding
-            out_embeds = self.transformer_encoder(in_embeds)
-            out_embeds = torch.cat(
-                [out_embeds[:,i] for i in range(out_embeds.shape[1])], dim=1
-            )
-            projected_embeds = self.linear_projection(out_embeds)
-            nobs_features = torch.cat([projected_embeds, torch.cat(low_dim_features, dim=-1)], dim=1) # (B, obs_feature_dim)
-        elif self.fuse_mode == 'concat':
-            nobs_features = torch.cat(vision_features + low_dim_features + force_features, dim=-1) # (B, obs_feature_dim)
+            out_embeds = self.transformer_encoder(in_embeds) # (B, feature_num, feature_dim)
+
+            # feature 별로 나눠서 보기; 필요없긴 함
+            token_sizes = [x.shape[1] for x in modality_features]
+            attended_modalities = list(torch.split(out_embeds, token_sizes, dim=1))
+            attended_vision = attended_modalities[:len(self.rgb_keys)]
+            attended_low_dim = attended_modalities[len(self.rgb_keys)]
+            attended_force = attended_modalities[len(self.rgb_keys) + 1]
+            token_num = sum(token_sizes)
+
+            nobs_features = out_embeds
+            assert nobs_features.shape[1] == token_num
+
+        # elif self.fuse_mode == 'concat':
+        #     nobs_features = torch.cat(vision_features + low_dim_features + force_features, dim=-1)
         
         assert nobs_features.shape[-1] == Do, f"Expected obs feature dim {Do}, got {nobs_features.shape[-1]}"
 
@@ -431,21 +455,20 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         # handle different ways of passing observation
         cond = None # obs
         if self.obs_as_cond:   # cross attention
-            cond = nobs_features.reshape(B, -1) # 이거 문제있다.
-            
+            cond = nobs_features
             shape = (B, T, Da) # action dim
             if self.pred_action_steps_only:   # False; 이거 이용하면 가변길이 액션 생성할수있겠다.
                 shape = (B, self.n_action_steps, Da)
             cond_data = torch.zeros(size=shape, device=device, dtype=dtype)
             cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
 
-        else:   # inpainting, self attention
-            nobs_features = nobs_features.reshape(B, -1) # 문제 있다.
-            shape = (B, T, Da+Do)
-            cond_data = torch.zeros(size=shape, device=device, dtype=dtype)
-            cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
-            cond_data[:,:To,Da:] = nobs_features
-            cond_mask[:,:To,Da:] = True   # obs와 action이후 dimension은 masking
+        # else:   # inpainting, self attention
+        #     nobs_features = nobs_features.reshape(B, -1) # 문제 있다.
+        #     shape = (B, T, Da+Do)
+        #     cond_data = torch.zeros(size=shape, device=device, dtype=dtype)
+        #     cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
+        #     cond_data[:,:To,Da:] = nobs_features
+        #     cond_mask[:,:To,Da:] = True   # obs와 action이후 dimension은 masking
 
         # run sampling; Denoising후 trajectory
         nsample = self.conditional_sample(
@@ -485,8 +508,27 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         ) -> torch.optim.Optimizer:
         optim_groups = self.model.get_optim_groups(
             weight_decay=transformer_weight_decay)
+        
+        # obs encoder
+        modules = [self.vision_encoder, self.force_encoder, self.low_dim_encoder]
+        if hasattr(self, 'attention_pool_2d'):
+            modules.append(self.attention_pool_2d)
+        if hasattr(self, 'transformer_encoder'):
+            modules.append(self.transformer_encoder)
+        if hasattr(self, 'linear_projection'):
+            modules.append(self.linear_projection)
+
+        obs_params = []
+        for module in modules:
+            obs_params.extend([p for p in module.parameters() if p.requires_grad])
+        
+        if hasattr(self, 'position_embedding'):
+            pe = self.position_embedding
+            if isinstance(pe, torch.nn.Parameter) and pe.requires_grad:
+                obs_params.append(pe)
+
         optim_groups.append({
-            "params": self.obs_encoder.parameters(),
+            "params": obs_params,
             "weight_decay": obs_encoder_weight_decay
         })
         optimizer = torch.optim.AdamW(
@@ -497,39 +539,113 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
     def compute_loss(self, batch):
         # normalize input
         assert 'valid_mask' not in batch
+
+        # image crop, resize, colorjitter
+        for i in range(self.num_image):
+            img = batch['obs'][f'image{i}'].reshape(-1, *batch['obs'][f'image{i}'].shape[2:])
+            img = self.transform_train(img)
+            batch['obs'][f'image{i}'] = img.reshape(*batch['obs'][f'image{i}'].shape[:])
+
+
         nobs = self.normalizer.normalize(batch['obs'])
         nactions = self.normalizer['action'].normalize(batch['action'])
-        batch_size = nactions.shape[0]
-        horizon = nactions.shape[1]
         To = self.n_obs_steps
+        B = nactions.shape[0]
+        T = nactions.shape[1]
+        Do = self.obs_feature_dim   # 관찰할 것의 dimension
+
+
+        # Separate and save wrench data
+        wrench_nobs = {}
+        for key in self.wrench_keys:
+            wrench_nobs[key] = nobs.pop(key)  # Save and remove from nobs
+        
+        this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:])) # (B, To, ...) -> (B*To, ...)
+
+        modality_features = list()
+
+        # Image encoding
+        vision_features = []
+        for key in self.rgb_keys:
+            img = this_nobs[key]
+            assert img.shape[1:] == self.key_shape_map[key]
+            raw_vision_feature = self.vision_encoder(img) # (B*To, vision_feature_dim, n, n)
+            # resnet
+            if self.vision_model_name.startswith('resnet'):
+                vision_feature = self.attention_pool_2d(raw_vision_feature) # (B*To, vision_feature_dim)
+            # ViT
+            else:
+                vision_feature = raw_vision_feature[:, 0, :]   # CLS token
+            vision_features.append(vision_feature.reshape(B, -1)) # (B, To*vision_feature_dim)
+            modality_features.append(vision_feature.reshape(B, To, -1)) # (B, To, vision_feature_dim)
+            # [(B, To, vision_feature_dim), (B, To, vision_feature_dim)]   이미지 2개
+
+        # low-dim encoding (linear)
+        low_dim_features = []
+        for t in range(To):
+            low_dim_t = torch.cat([nobs[key][:,t,:] for key in self.low_dim_keys], dim=-1)
+            low_dim_feature_t = self.low_dim_encoder(low_dim_t)
+            low_dim_features.append(low_dim_feature_t.reshape(B, -1))
+        low_dim_features = torch.stack(low_dim_features, dim=1)  # (B, To, low_dim_feature_dim)
+        modality_features.append(low_dim_features)
+        # [(B, To, vision_feature_dim), (B, To, vision_feature_dim), 
+        #  (B, To, low_dim_feature_dim)]   이미지 2개 + low-dim
+        
+        # Force encoding
+        force_features = []
+        combined_wrench_data = []
+        for key in self.wrench_keys:
+            combined_wrench_data.append(wrench_nobs[key]) # (B, To=1, wrench_axis, wrench_hist)
+        wrench_total = torch.cat(combined_wrench_data, dim=-2) # (B, To=1, num_wrench_component, wrench_hist)
+        force_feature = self.force_encoder(wrench_total.reshape(-1, *wrench_total.shape[-2:])) # (B, 1, feature_dim)
+        force_features.append(force_feature.reshape(B, -1)) # (B, feature_dim)
+        modality_features.append(force_feature) # (B, 1, feature_dim)
+        # [(B, To, vision_feature_dim), (B, To, vision_feature_dim), 
+        #  (B, To, low_dim_feature_dim), 
+        #  (B, 1, force_feature_dim)]    이미지 2개 + low-dim + force (force는 To=1)
+
+        
+        # fuse mode; 이거 어차피 transformer encoder가 할거라 없어져도 될듯
+        if self.fuse_mode == 'modality-attention':
+            in_embeds = torch.cat(modality_features, dim=1) # (B, feature_num, feature_dim)
+            if self.position_encoding == 'learnable':
+                if self.position_embedding.device != in_embeds.device:
+                    self.position_embedding = self.position_embedding.to(in_embeds.device)
+                in_embeds = in_embeds + self.position_embedding
+            out_embeds = self.transformer_encoder(in_embeds) # (B, feature_num, feature_dim)
+            
+            # feature 별로 나눠서 보기; 필요없긴 함
+            token_sizes = [x.shape[1] for x in modality_features]
+            attended_modalities = list(torch.split(out_embeds, token_sizes, dim=1))
+            attended_vision = attended_modalities[:len(self.rgb_keys)]
+            attended_low_dim = attended_modalities[len(self.rgb_keys)]
+            attended_force = attended_modalities[len(self.rgb_keys) + 1]
+            token_num = sum(token_sizes)
+
+            nobs_features = out_embeds # (B, token_num, feature_dim)
+            assert nobs_features.shape[1] == token_num
+            
+        # elif self.fuse_mode == 'concat':
+        #     nobs_features = torch.cat(vision_features + [low_dim_features.reshape(B, -1)] + force_features, dim=-1)
+        
+        assert nobs_features.shape[-1] == Do, f"Expected obs feature dim {Do}, got {nobs_features.shape[-1]}"
+
 
         # handle different ways of passing observation
         cond = None
         trajectory = nactions
         if self.obs_as_cond:
-            # reshape B, T, ... to B*T
-            this_nobs = dict_apply(nobs, 
-                lambda x: x[:,:To,...].reshape(-1,*x.shape[2:]))
-            nobs_features = self.obs_encoder(this_nobs)
-            # reshape back to B, T, Do
-            cond = nobs_features.reshape(batch_size, To, -1)
+            cond = nobs_features
             if self.pred_action_steps_only:
                 start = To - 1
                 end = start + self.n_action_steps
                 trajectory = nactions[:,start:end]
-        else:
-            # reshape B, T, ... to B*T
-            this_nobs = dict_apply(nobs, lambda x: x.reshape(-1, *x.shape[2:]))
-            nobs_features = self.obs_encoder(this_nobs)
-            # reshape back to B, T, Do
-            nobs_features = nobs_features.reshape(batch_size, horizon, -1) # 여기는 To 아니고 horizon
-            trajectory = torch.cat([nactions, nobs_features], dim=-1).detach()
 
         # generate impainting mask
         if self.pred_action_steps_only:
             condition_mask = torch.zeros_like(trajectory, dtype=torch.bool)
         else:
-            condition_mask = self.mask_generator(trajectory.shape)
+            condition_mask = self.mask_generator(trajectory.shape) # 전부 False
 
         # Sample noise that we'll add to the images
         noise = torch.randn(trajectory.shape, device=trajectory.device)
@@ -545,7 +661,7 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             trajectory, noise, timesteps)
 
         # compute loss mask
-        loss_mask = ~condition_mask
+        loss_mask = ~condition_mask # 전체 action 모두 loss
 
         # apply conditioning
         noisy_trajectory[condition_mask] = trajectory[condition_mask]
