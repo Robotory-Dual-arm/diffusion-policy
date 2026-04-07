@@ -175,8 +175,8 @@ def ema_filter(wrench_data, alpha):
     return result
 
 def main():
-    input_filenames = ['../data/common_data.hdf5']
-    output_filename = '../data/diffusion_data.hdf5'
+    input_filenames = ['/home/baetae/Downloads/common_data_erase_board.hdf5']
+    output_filename = '/data/baetae/260405/diffusion_data_erase_board.hdf5'
     output_demo_idx = 0
     transform = get_image_transform(input_res=(640,480), output_res=(224,224), bgr_to_rgb=True)
 
@@ -190,7 +190,7 @@ def main():
                 demo_len = len(input_data)
                 print(input_filename, '/ demo_len =', demo_len)
 
-                for demo_idx in tqdm.tqdm(range(demo_len), desc=f"Processing {input_filename}"):
+                for demo_idx in tqdm.tqdm(range(demo_len), desc=f"Processing file"):
                      
                     # n번째 demo 생성
                     input_demo_name = f'demo_{demo_idx}'
@@ -286,7 +286,7 @@ def main():
                         else:
                             break
 
-                    print(f"before robot idx {robot_idx+1}, it can't get 32 wrench data")
+                    # print(f"before robot idx {robot_idx+1}, it can't get 32 wrench data")
 
                     robot_start_idx = robot_idx + 1
 

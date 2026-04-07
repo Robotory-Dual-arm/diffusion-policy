@@ -27,6 +27,35 @@ def print_attn_mask_grid(mask: torch.Tensor, name: str = "mask"):
             row.append(" O" if allowed[i, j] else " X")
         print(f"{i:2d}: " + "".join(row))
 
+#####
+class CustomizedTransformerDecoderLayer(nn.TransformerDecoderLayer):
+    """
+    nn.TransformerDecoderLayer 확장 버전.
+    - cross-attn need_weights=True/False 토글 가능
+    - 마지막 cross-attn weight를 레이어 내부에 저장
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.capture_cross_attention_weights = False
+        self.last_cross_attn_weights = None
+
+    def enable_cross_attention_weights(self, enabled: bool = True):
+        self.capture_cross_attention_weights = enabled
+        if not enabled:
+            self.last_cross_attn_weights = None
+
+    def _mha_block(self, x, mem, attn_mask, key_padding_mask):
+        x, attn_weights = self.multihead_attn(
+            x,
+            mem,
+            mem,
+            attn_mask=attn_mask,
+            key_padding_mask=key_padding_mask,
+            need_weights=self.capture_cross_attention_weights,
+        )
+        self.last_cross_attn_weights = attn_weights if self.capture_cross_attention_weights else None
+        return self.dropout2(x)
+#####
 class TransformerForDiffusion(ModuleAttrMixin):
     def __init__(self,
             input_dim: int,
@@ -97,7 +126,7 @@ class TransformerForDiffusion(ModuleAttrMixin):
                     nn.Linear(4 * n_emb, n_emb)
                 )
             # decoder : action self attention + cross attention to condition
-            decoder_layer = nn.TransformerDecoderLayer(
+            decoder_layer = CustomizedTransformerDecoderLayer(
                 d_model=n_emb,
                 nhead=n_head,
                 dim_feedforward=4*n_emb,
@@ -319,6 +348,31 @@ class TransformerForDiffusion(ModuleAttrMixin):
             optim_groups, lr=learning_rate, betas=betas
         )
         return optimizer
+
+#####
+    # attention weight 확인
+    def set_attention_capture(self, enabled: bool = True) -> None:
+        """Decoder cross-attention weight 저장 on/off."""
+        if self.decoder is None:
+            return
+        for layer in self.decoder.layers:
+            if isinstance(layer, CustomizedTransformerDecoderLayer):
+                layer.enable_cross_attention_weights(enabled=enabled)
+
+    def get_attention_weights(self):
+        """레이어별 cross-attention weights 반환."""
+        if self.decoder is None:
+            return []
+
+        return [
+            {
+                'layer': i,
+                'cross_attn': layer.last_cross_attn_weights,
+            }
+            for i, layer in enumerate(self.decoder.layers)
+            if isinstance(layer, CustomizedTransformerDecoderLayer)
+        ]
+#####
 
     def forward(self,   # model_output = model(trajectory, t, cond)로 호출
         sample: torch.Tensor, 

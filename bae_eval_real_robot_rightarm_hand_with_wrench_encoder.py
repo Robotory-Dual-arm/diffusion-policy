@@ -51,6 +51,38 @@ from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
+#####
+def summarize_cross_attention(attn_info, tag: str = ""):
+    if not attn_info:
+        print(f"{tag}[ATTN] no attention data")
+        return
+
+    for layer_item in attn_info:
+        w = layer_item.get('cross_attn', None)
+        if w is None:
+            print(f"{tag}[ATTN] layer={layer_item.get('layer')} cross_attn=None")
+            continue
+        print(
+            f"{tag}[ATTN] layer={layer_item.get('layer')} "
+            f"shape={tuple(w.shape)} "
+            f"mean={w.mean().item():.6f} max={w.max().item():.6f} min={w.min().item():.6f}"
+        )
+
+
+def save_attention_trace(trace, save_root: pathlib.Path, prefix: str):
+    if not trace:
+        return
+
+    save_root.mkdir(parents=True, exist_ok=True)
+    for step in trace:
+        denoise_step = int(step.get('denoise_step', -1))
+        diffusion_timestep = int(step.get('diffusion_timestep', -1))
+        out_path = save_root / (
+            f"{prefix}_denoise{denoise_step:03d}_t{diffusion_timestep:04d}.pt"
+        )
+        torch.save(step, out_path)
+#####
+
 @click.command()
 @click.option('--input', '-i', required=True, help='Path to checkpoint')   # checkpoint
 @click.option('--output', '-o', required=True, help='Directory to save recording')   
@@ -75,6 +107,11 @@ def main(input, output, robot_ip, match_dataset, match_episode,
     
     # Head = 242422304502, Front = 336222070518, Left = 218622276386, Right = 126122270712
     serial_numbers = ['126122270712', '151222078010'] # right, table
+    # attention weight 확인
+    show_attention = True
+    attention_output_dir = pathlib.Path(output) / 'attention'
+    attention_dump_idx = 0
+    # RTC
     use_pigdm = False
     if use_pigdm == True:
         cfg._target_ = 'diffusion_policy.workspace.bae_train_diffusion_unet_hybrid_pigdm_workspace.TrainDiffusionUnetHybridPigdmWorkspace'
@@ -99,6 +136,15 @@ def main(input, output, robot_ip, match_dataset, match_episode,
             policy = workspace.ema_model   # ema_model 가져옴 (가중치 값들)
         device = torch.device('cuda')
         policy.eval().to(device)
+
+#####
+        if show_attention:
+            if hasattr(policy, 'set_attention_trace_capture'):
+                policy.set_attention_trace_capture(True)
+            elif hasattr(policy, 'model') and hasattr(policy.model, 'set_attention_capture'):
+                policy.model.set_attention_capture(True)
+            print('[ATTN] cross-attention capture enabled')
+#####
         
         #추가됨
         # policy.obs_encoder.to(device)
@@ -139,7 +185,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
             camera_serial_numbers=serial_numbers,
             n_obs_steps=n_obs_steps,   
             shape_meta=cfg.task.shape_meta,
-            obs_image_resolution=obs_res, # (244,244)
+            obs_image_resolution=obs_res, # (224,224)
             obs_float32=True,   
             init_joints=init_joints,   # False
             enable_multi_cam_vis=True,   # 실시간 시각화 
@@ -191,6 +237,14 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                     result = policy.predict_action_pigdm(obs_dict, obs)
                 else:
                     result = policy.predict_action(obs_dict)
+
+#####
+                if show_attention and hasattr(policy, 'model') and hasattr(policy.model, 'get_attention_weights'):
+                    summarize_cross_attention(policy.model.get_attention_weights(), tag='[warmup] ')
+                if show_attention and hasattr(policy, 'get_last_attention_trace'):
+                    warmup_trace = policy.get_last_attention_trace()
+                    save_attention_trace(warmup_trace, attention_output_dir, prefix='warmup')
+#####
 
                 # 실제 실행할 action trajectory
                 action = result['action'][0].detach().to('cpu').numpy()   # [0]은 배치차원 제거, tensor --> np
@@ -249,6 +303,19 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                                 result = policy.predict_action_pigdm(obs_dict, obs)
                             else:
                                 result = policy.predict_action(obs_dict)
+
+#####
+                            if show_attention and hasattr(policy, 'model') and hasattr(policy.model, 'get_attention_weights'):
+                                summarize_cross_attention(policy.model.get_attention_weights(), tag='[eval] ')
+                            if show_attention and hasattr(policy, 'get_last_attention_trace'):
+                                trace = policy.get_last_attention_trace()
+                                save_attention_trace(
+                                    trace,
+                                    attention_output_dir,
+                                    prefix=f'iter{attention_dump_idx:06d}'
+                                )
+                                attention_dump_idx += 1
+#####
 
                             # this action starts from the first obs step
                             action = result['action'][0].detach().to('cpu').numpy()   # 실행할 action[Horizon, Action_Dim]

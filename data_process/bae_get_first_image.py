@@ -2,8 +2,8 @@ import h5py
 import numpy as np
 from PIL import Image
 
-h5_path = "/data/260305_2248/common_data.hdf5"
-image_name = "image_R"
+h5_path = "/data/baetae/260405/diffusion_data_erase_board.hdf5"
+image_name = "image1"
 
 out_path = f"{image_name}.png"
 

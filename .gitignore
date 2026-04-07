@@ -7,6 +7,7 @@ data_local
 .vscode
 _wandb
 action_denoising_results
+data_process/erase_board_force_data
 
 **/.DS_Store
 

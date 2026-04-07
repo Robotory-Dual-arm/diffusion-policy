@@ -296,6 +296,11 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         self.position_encoding = obs_encoder.position_encoding
         self.feature_aggregation = vc.feature_aggregation
 
+#####
+        self.capture_attention_trace = False
+        self.last_attention_trace = []
+#####
+
         if num_inference_steps is None:
             num_inference_steps = noise_scheduler.config.num_train_timesteps
         self.num_inference_steps = num_inference_steps
@@ -308,6 +313,22 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
 
     
     # ========= inference  ============
+
+#####    
+    def set_attention_trace_capture(self, enabled: bool = True):
+        """
+        diffusion sampling 동안 timestep별 cross-attention trace 저장 on/off.
+        """
+        self.capture_attention_trace = enabled
+        if hasattr(self.model, 'set_attention_capture'):
+            self.model.set_attention_capture(enabled)
+        if not enabled:
+            self.last_attention_trace = []
+
+    def get_last_attention_trace(self):
+        return self.last_attention_trace
+#####
+
     def conditional_sample(self, 
             condition_data, condition_mask,
             cond=None, generator=None,
@@ -327,12 +348,38 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         # set step values; scheduler.timestep 생성
         scheduler.set_timesteps(self.num_inference_steps)
 
-        for t in scheduler.timesteps:
+#####
+        self.last_attention_trace = []
+        # for t in scheduler.timesteps:
+        for denoise_step, t in enumerate(scheduler.timesteps):
             # 1. apply conditioning
             trajectory[condition_mask] = condition_data[condition_mask] # inpainting일때, condition 갈아끼우기
 
             # 2. predict model output
             model_output = model(trajectory, t, cond)   # Transformer
+
+            if self.capture_attention_trace and hasattr(model, 'get_attention_weights'):
+                timestep_attention = []
+                for layer_item in model.get_attention_weights():
+                    w = layer_item.get('cross_attn', None)
+                    if w is None:
+                        timestep_attention.append({
+                            'layer': layer_item.get('layer', -1),
+                            'cross_attn': None,
+                        })
+                    else:
+                        timestep_attention.append({
+                            'layer': layer_item.get('layer', -1),
+                            'cross_attn': w.detach().to('cpu').clone(),
+                        })
+
+                t_int = int(t.item()) if torch.is_tensor(t) else int(t)
+                self.last_attention_trace.append({
+                    'denoise_step': denoise_step,
+                    'diffusion_timestep': t_int,
+                    'layers': timestep_attention,
+                })
+#####
 
             # 3. compute previous image: x_t -> x_t-1
             trajectory = scheduler.step(
@@ -605,7 +652,7 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         #  (B, 1, force_feature_dim)]    이미지 2개 + low-dim + force (force는 To=1)
 
         
-        # fuse mode; 이거 어차피 transformer encoder가 할거라 없어져도 될듯
+        # fuse mode; attention score볼거면 없애는게 좋을수도
         if self.fuse_mode == 'modality-attention':
             in_embeds = torch.cat(modality_features, dim=1) # (B, feature_num, feature_dim)
             if self.position_encoding == 'learnable':
@@ -649,6 +696,14 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
 
         # Sample noise that we'll add to the images
         noise = torch.randn(trajectory.shape, device=trajectory.device)
+
+
+        # input perturbation by adding additonal noise to alleviate exposure bias
+        # reference: https://github.com/forever208/DDPM-IP
+        self.input_pertub = 0.1
+        noise_new = noise + self.input_pertub * torch.randn(trajectory.shape, device=trajectory.device)
+
+
         bsz = trajectory.shape[0]
         # Sample a random timestep for each image
         timesteps = torch.randint(

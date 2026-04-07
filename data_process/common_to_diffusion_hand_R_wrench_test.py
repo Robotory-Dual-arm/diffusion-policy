@@ -175,10 +175,73 @@ def ema_filter(wrench_data, alpha):
         result.append(alpha * wrench_data[i] + (1 - alpha) * result[i-1])
     return result
 
+
+def plot_single_demo(entry, show=True):
+    demo_idx = entry['idx']
+
+    ch_names = ['fx', 'fy', 'fz']
+    wrist_colors = ['tab:blue', 'tab:orange', 'tab:green']
+    finger_names = ['thumb', 'index', 'middle', 'ring', 'baby']
+    finger_colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple']
+
+    fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=False)
+    ax_wrist, ax_finger = axes
+
+    raw_ts = entry['raw_ts']
+    post_ts = entry['post_ts']
+
+    for ci in range(3):
+        c = wrist_colors[ci]
+        ax_wrist.plot(
+            raw_ts, entry['raw_wrist_xyz'][:, ci],
+            color=c, alpha=0.2, linewidth=1.4,
+            label=f'{ch_names[ci]} raw'
+        )
+        ax_wrist.plot(
+            post_ts, entry['post_wrist_xyz'][:, ci],
+            color=c, alpha=0.95, linewidth=2.0,
+            label=f'{ch_names[ci]} zero+EMA'
+        )
+    ax_wrist.set_title(f'demo_{demo_idx} wrist XYZ')
+    ax_wrist.set_xlabel('time (s)')
+    ax_wrist.set_ylabel('force (N)')
+    ax_wrist.grid(alpha=0.2)
+    ax_wrist.legend(ncol=3, fontsize=8)
+
+    for i in range(5):
+        c = finger_colors[i]
+        ax_finger.plot(
+            raw_ts, entry['raw_fingers'][i],
+            color=c, alpha=0.2, linewidth=1.4,
+            label=f'{finger_names[i]} raw'
+        )
+        ax_finger.plot(
+            post_ts, entry['post_fingers'][i],
+            color=c, alpha=0.95, linewidth=2.0,
+            label=f'{finger_names[i]} zero+EMA'
+        )
+    ax_finger.set_title(f'demo_{demo_idx} finger Fz')
+    ax_finger.set_xlabel('time (s)')
+    ax_finger.set_ylabel('Fz (N)')
+    ax_finger.grid(alpha=0.2)
+    ax_finger.legend(ncol=3, fontsize=8)
+
+    fig.suptitle(f'demo_{demo_idx}: wrench before/after zero-set+EMA')
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    fig.savefig(f'demo_{demo_idx}_wrench_single.png')
+
+    if show:
+        plt.show()
+
+    plt.close(fig)
+
+
 def main():
-    input_filenames = ['/data/baetae/260306/common_data.hdf5']
-    output_filename = '/data/baetae/260306/diffusion_data_test.hdf5'
+    input_filenames = ['/home/baetae/Downloads/common_data_erase_board.hdf5']
+    output_filename = '/data/baetae/hahaha.hdf5'
     output_demo_idx = 0
+    target_demo_idx = 79  # None이면 모든 demo 처리, 정수면 해당 demo 하나만 처리
+    show_target_demo_plot = True
     show_demo0_plots = True
     # collect raw/post series for demos to plot later (0,1,2)
     collected_plots = []
@@ -194,7 +257,16 @@ def main():
                 demo_len = len(input_data)
                 print(input_filename, '/ demo_len =', demo_len)
 
-                for demo_idx in tqdm.tqdm(range(demo_len), desc=f"Processing {input_filename}"):
+                if target_demo_idx is None:
+                    demo_indices = range(demo_len)
+                else:
+                    if target_demo_idx < 0 or target_demo_idx >= demo_len:
+                        raise ValueError(
+                            f"target_demo_idx={target_demo_idx} out of range [0, {demo_len-1}]"
+                        )
+                    demo_indices = [target_demo_idx]
+
+                for demo_idx in tqdm.tqdm(demo_indices, desc=f"Processing {input_filename}"):
                      
                     # n번째 demo 생성
                     input_demo_name = f'demo_{demo_idx}'
@@ -239,8 +311,12 @@ def main():
                     output_wrench_ring_R = input_wrench_ring_R[:, 2:3]     # fz
                     output_wrench_baby_R = input_wrench_baby_R[:, 2:3]     # fz
 
-                    # --- capture raw time-series before zero-set/EMA for demo 0/1/2 plotting ---
-                    if demo_idx in (0, 1, 2):
+                    # --- capture raw time-series before zero-set/EMA for plotting ---
+                    collect_this_demo = (
+                        (target_demo_idx is None and demo_idx in (0, 1, 2))
+                        or (target_demo_idx is not None and demo_idx == target_demo_idx)
+                    )
+                    if collect_this_demo:
                         raw_ts = np.array(input_timestamp_wrench)
                         raw_wrist_xyz = np.array(output_wrench_wrist_R[:, :3])  # fx,fy,fz
                         # thumb/index/... are shape (N,1) -> extract scalars
@@ -308,7 +384,7 @@ def main():
                         else:
                             break
 
-                    print(f"before robot idx {robot_idx+1}, it can't get 32 wrench data")
+                    # print(f"before robot idx {robot_idx+1}, it can't get 32 wrench data")
 
                     robot_start_idx = robot_idx + 1
 
@@ -397,8 +473,8 @@ def main():
 
                     output_demo_n.create_dataset('actions', data=output_actions[1:])
 
-                    # collect series for plotting across demos 0,1,2
-                    if demo_idx in (0, 1, 2):
+                    # collect series for plotting
+                    if collect_this_demo:
                         entry = {
                             'idx': demo_idx,
                             'raw_ts': raw_ts,
@@ -412,11 +488,16 @@ def main():
                         }
                         collected_plots.append(entry)
 
+                        # single-demo 모드에서는 처리 직후 바로 figure 표시
+                        if target_demo_idx is not None:
+                            plot_single_demo(entry, show=show_target_demo_plot)
+                            print(f"Saved plot: demo_{demo_idx}_wrench_single.png")
+
                     output_demo_idx += 1
         # If we collected plots for demos 0..2, make 2 figures:
         #   1) wrist figure with 3 subplots (demo 0/1/2)
         #   2) finger figure with 3 subplots (demo 0/1/2)
-        if len(collected_plots) > 0:
+        if target_demo_idx is None and len(collected_plots) > 0:
             ch_names = ['fx', 'fy', 'fz']
             wrist_colors = ['tab:blue', 'tab:orange', 'tab:green']
             finger_names = ['thumb', 'index', 'middle', 'ring', 'baby']
