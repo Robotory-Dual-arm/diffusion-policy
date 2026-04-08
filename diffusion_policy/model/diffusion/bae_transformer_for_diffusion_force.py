@@ -44,15 +44,27 @@ class CustomizedTransformerDecoderLayer(nn.TransformerDecoderLayer):
         if not enabled:
             self.last_cross_attn_weights = None
 
-    def _mha_block(self, x, mem, attn_mask, key_padding_mask):
-        x, attn_weights = self.multihead_attn(
-            x,
-            mem,
-            mem,
-            attn_mask=attn_mask,
-            key_padding_mask=key_padding_mask,
-            need_weights=self.capture_cross_attention_weights,
-        )
+    def _mha_block(self, x, mem, attn_mask, key_padding_mask, is_causal: bool = False):
+        try:
+            x, attn_weights = self.multihead_attn(
+                x,
+                mem,
+                mem,
+                attn_mask=attn_mask,
+                key_padding_mask=key_padding_mask,
+                need_weights=self.capture_cross_attention_weights,
+                is_causal=is_causal,
+            )
+        except TypeError:
+            # torch 1.12 계열: is_causal 미지원
+            x, attn_weights = self.multihead_attn(
+                x,
+                mem,
+                mem,
+                attn_mask=attn_mask,
+                key_padding_mask=key_padding_mask,
+                need_weights=self.capture_cross_attention_weights,
+            )
         self.last_cross_attn_weights = attn_weights if self.capture_cross_attention_weights else None
         return self.dropout2(x)
 #####
