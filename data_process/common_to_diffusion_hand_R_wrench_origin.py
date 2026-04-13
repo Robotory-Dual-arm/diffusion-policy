@@ -176,7 +176,7 @@ def ema_filter(wrench_data, alpha):
 
 def main():
     input_filenames = ['/home/baetae/Downloads/common_data_erase_board.hdf5']
-    output_filename = '/data/baetae/260405/diffusion_data_erase_board.hdf5'
+    output_filename = '/data/baetae/260412/diffusion_data_erase_board_no_image.hdf5'
     output_demo_idx = 0
     transform = get_image_transform(input_res=(640,480), output_res=(224,224), bgr_to_rgb=True)
 
@@ -214,8 +214,8 @@ def main():
                     # input_image_H = input_obs['image_H'][::2]
                     # input_image_F = input_obs['image_F'][::2]
                     # input_image_L = input_obs['image_L'][::2]
-                    input_image_R = input_obs['image_R'][::2]
-                    input_image_T = input_obs['image_T'][::2]
+                    # input_image_R = input_obs['image_R'][::2]
+                    # input_image_T = input_obs['image_T'][::2]
 
                     # wrench: 250Hz
                     input_timestamp_wrench = input_obs['timestamp_wrench'][:] # [0.0, 0.004, 0.008, 0.012, ...]
@@ -292,8 +292,8 @@ def main():
 
                     input_timestamp_robot = input_timestamp_robot[robot_start_idx:]
 
-                    input_image_R = input_image_R[robot_start_idx:]
-                    input_image_T = input_image_T[robot_start_idx:]
+                    # input_image_R = input_image_R[robot_start_idx:]
+                    # input_image_T = input_image_T[robot_start_idx:]
                     
                     input_joint_R = input_joint_R[robot_start_idx:]
                     input_hand_pose_R = input_hand_pose_R[robot_start_idx:]
@@ -319,8 +319,8 @@ def main():
         
 
                     ### 이미지 변환 (배치 처리)
-                    output_image_R = np.array([transform(img) for img in input_image_R])
-                    output_image_T = np.array([transform(img) for img in input_image_T])
+                    # output_image_R = np.array([transform(img) for img in input_image_R])
+                    # output_image_T = np.array([transform(img) for img in input_image_T])
 
 
                     # joint -> pose, quat
@@ -355,8 +355,8 @@ def main():
                     # output_obs.create_dataset('image0', data=output_image_H[:-1])
                     # output_obs.create_dataset('image1', data=output_image_F[:-1])
                     # output_obs.create_dataset('imageX', data=output_image_L[:-1])
-                    output_obs.create_dataset('image0', data=output_image_R[:-1])
-                    output_obs.create_dataset('image1', data=output_image_T[:-1])
+                    # output_obs.create_dataset('image0', data=output_image_R[:-1])
+                    # output_obs.create_dataset('image0', data=output_image_T[:-1])
 
                     output_obs.create_dataset('wrench_wrist_R', data=output_wrench_wrist_R_32hist[:-1])
                     output_obs.create_dataset('wrench_thumb_R', data=output_wrench_thumb_R_32hist[:-1])

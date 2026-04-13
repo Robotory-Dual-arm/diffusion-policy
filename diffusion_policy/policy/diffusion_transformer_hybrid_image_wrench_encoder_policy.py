@@ -137,17 +137,18 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
 
 
         ### Image Preprocess
-        randomcrop = T.RandomCrop(size=int(image_resolution[0] * vc.transforms.randomcrop.ratio))
-        centercrop = T.CenterCrop(size=int(image_resolution[0] * vc.transforms.randomcrop.ratio))
-        resize = T.Resize(size=image_resolution[0], antialias=True)
-        colorjitter = T.ColorJitter(brightness=vc.transforms.colorjitter.brightness,
-                                                         contrast=vc.transforms.colorjitter.contrast,
-                                                         saturation=vc.transforms.colorjitter.saturation,
-                                                         hue=vc.transforms.colorjitter.hue,)
-        grayscale = T.RandomGrayscale(p=vc.transforms.colorjitter.grayscale)
-        
-        self.transform_train = T.Compose([randomcrop, resize, colorjitter, grayscale])
-        self.transform_eval = T.Compose([centercrop, resize])
+        if len(rgb_keys) > 0:
+            randomcrop = T.RandomCrop(size=int(image_resolution[0] * vc.transforms.randomcrop.ratio))
+            centercrop = T.CenterCrop(size=int(image_resolution[0] * vc.transforms.randomcrop.ratio))
+            resize = T.Resize(size=image_resolution[0], antialias=True)
+            colorjitter = T.ColorJitter(brightness=vc.transforms.colorjitter.brightness,
+                                                            contrast=vc.transforms.colorjitter.contrast,
+                                                            saturation=vc.transforms.colorjitter.saturation,
+                                                            hue=vc.transforms.colorjitter.hue,)
+            grayscale = T.RandomGrayscale(p=vc.transforms.colorjitter.grayscale)
+            
+            self.transform_train = T.Compose([randomcrop, resize, colorjitter, grayscale])
+            self.transform_eval = T.Compose([centercrop, resize])
         
         
         ### Vision Encoder
@@ -167,27 +168,28 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             else:
                 raise ValueError(f"Unsupported downsample ratio {vc.downsample_ratio} for ResNet")
             # resnet from scratch  BN -> GN
-            if vc.use_group_norm and not vc.pretrained:
-                vision_encoder = replace_submodules(
-                    root_module=vision_encoder,
-                    predicate=lambda x: isinstance(x, nn.BatchNorm2d),
-                    func=lambda x: nn.GroupNorm(
-                        num_groups=((x.num_features // 16) 
-                                    if (x.num_features % 16 == 0) 
-                                    else (x.num_features // 8)
-                                    ),
-                        num_channels=x.num_features
+            if len(rgb_keys) > 0:
+                if vc.use_group_norm and not vc.pretrained:
+                    vision_encoder = replace_submodules(
+                        root_module=vision_encoder,
+                        predicate=lambda x: isinstance(x, nn.BatchNorm2d),
+                        func=lambda x: nn.GroupNorm(
+                            num_groups=((x.num_features // 16) 
+                                        if (x.num_features % 16 == 0) 
+                                        else (x.num_features // 8)
+                                        ),
+                            num_channels=x.num_features
+                        )
                     )
-                )
-            
-            if vc.feature_aggregation == 'attention_pool_2d':
-                feature_map_shape = [ x // vc.downsample_ratio for x in image_resolution]
-                self.attention_pool_2d = AttentionPool2d(
-                    spacial_dim=feature_map_shape[0],
-                    embed_dim=vision_feature_dim,
-                    num_heads=vision_feature_dim // 64,
-                    output_dim=vision_feature_dim
-                )
+                
+                if vc.feature_aggregation == 'attention_pool_2d':
+                    feature_map_shape = [ x // vc.downsample_ratio for x in image_resolution]
+                    self.attention_pool_2d = AttentionPool2d(
+                        spacial_dim=feature_map_shape[0],
+                        embed_dim=vision_feature_dim,
+                        num_heads=vision_feature_dim // 64,
+                        output_dim=vision_feature_dim
+                    )
 
 
         # ViT
@@ -547,17 +549,23 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         self.normalizer.load_state_dict(normalizer.state_dict())
 
     def get_optimizer(
-            self, 
-            transformer_weight_decay: float, 
+            # self, 
+            # transformer_weight_decay: float, 
+            # obs_encoder_weight_decay: float,
+            # learning_rate: float, 
+            # betas: Tuple[float, float]
+            self,
+            lr: float,
+            weight_decay: float,
+            obs_encoder_lr: float,
             obs_encoder_weight_decay: float,
-            learning_rate: float, 
             betas: Tuple[float, float]
         ) -> torch.optim.Optimizer:
-        optim_groups = self.model.get_optim_groups(
-            weight_decay=transformer_weight_decay)
+        optim_groups = self.model.get_optim_groups( # transformer 추가
+            weight_decay=weight_decay)
         
-        # obs encoder
-        modules = [self.vision_encoder, self.force_encoder, self.low_dim_encoder]
+        # obs encoder from scratch
+        modules = [self.force_encoder, self.low_dim_encoder]
         if hasattr(self, 'attention_pool_2d'):
             modules.append(self.attention_pool_2d)
         if hasattr(self, 'transformer_encoder'):
@@ -573,13 +581,22 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             pe = self.position_embedding
             if isinstance(pe, torch.nn.Parameter) and pe.requires_grad:
                 obs_params.append(pe)
-
+        
         optim_groups.append({
             "params": obs_params,
             "weight_decay": obs_encoder_weight_decay
         })
+
+        # vision encoder from pretrained
+        optim_groups.append({
+            "params": [p for p in self.vision_encoder.parameters() if p.requires_grad],
+            "weight_decay": obs_encoder_weight_decay,
+            "lr": obs_encoder_lr
+        })
+
+        
         optimizer = torch.optim.AdamW(
-            optim_groups, lr=learning_rate, betas=betas
+            optim_groups, lr=lr, betas=betas
         )
         return optimizer
 

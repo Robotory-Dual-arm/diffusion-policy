@@ -91,11 +91,20 @@ class TransformerForDiffusion(ModuleAttrMixin):
         if n_obs_steps is None:
             n_obs_steps = horizon
         
+        ##### 임시
+        no_image = False
+        one_image = False
+
         T = horizon
         if obs_as_cond:
             assert time_as_cond
             # T_cond = n_obs_steps * (rgb + low_dim) + wrench + time 
             T_cond = n_obs_steps * (2 + 1) + 1 + 1  # 8
+
+            if no_image:
+                T_cond = n_obs_steps * (1) + 1 + 1  # 4
+            if one_image:
+                T_cond = n_obs_steps * (1 + 1) + 1 + 1  # 6
 
         
         # input embedding stem
@@ -193,6 +202,11 @@ class TransformerForDiffusion(ModuleAttrMixin):
 
                 mem_allow = torch.ones((T, S), dtype=torch.bool)  # True=허용, False=차단
                 x_list = [(0, 2), (0, 4), (0, 6), (0, 7)]
+
+                if no_image:
+                    x_list = [(0, 2), (0, 3)]
+                if one_image:
+                    x_list = [(0, 2), (0, 4), (0, 5)]
 
                 for ti, si in x_list:
                     if 0 <= ti < T and 0 <= si < S:
