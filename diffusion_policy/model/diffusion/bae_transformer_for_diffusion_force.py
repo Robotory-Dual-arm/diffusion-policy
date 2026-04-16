@@ -478,7 +478,7 @@ class TransformerForDiffusion(ModuleAttrMixin):
                 tgt=x,
                 memory=memory,
                 tgt_mask=self.mask,
-                memory_mask=self.memory_mask
+                memory_mask=None
             )
             # (B,T,n_emb)
         

@@ -477,11 +477,11 @@ class DualarmInterpolationController(mp.Process):
             'robot_quat_R': (4,),
             'hand_pose_R': (11,),
             'wrench_wrist_R': (6,),
-            'wrench_thumb_R': (6,),
+            'wrench_thumb_R': (1,),
             'wrench_index_R': (1,),
             'wrench_middle_R': (1,),
             'wrench_ring_R': (1,),
-            'wrench_baby_R': (6,),
+            'wrench_baby_R': (1,),
         }
         for key in receive_keys:
             shape = None

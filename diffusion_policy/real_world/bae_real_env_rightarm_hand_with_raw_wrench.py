@@ -5,7 +5,7 @@ import time
 import shutil
 import math
 from multiprocessing.managers import SharedMemoryManager
-from diffusion_policy.real_world.rightarm_hand_with_wrench_encoder_interpolation_controller import DualarmInterpolationController # 듀얼암 + 핸드
+from diffusion_policy.real_world.rightarm_hand_with_raw_wrench_interpolation_controller import DualarmInterpolationController # 듀얼암 + 핸드
 from diffusion_policy.real_world.multi_realsense import MultiRealsense, SingleRealsense
 from diffusion_policy.real_world.video_recorder import VideoRecorder
 from diffusion_policy.common.timestamp_accumulator import (
@@ -373,21 +373,9 @@ class DualarmRealEnv:
                 robot_timestamps
             )
 
-        # Wrench 32-frame obs        
-        try:
-            wrench_hist_dict = self.robot.dualarm_node.get_wrench_hist_32(shape_meta=self.shape_meta)
-        except (AttributeError, Exception):
-            # Fallback if node not yet initialized or other error
-            wrench_hist_dict = {}
-            for wrench_key in self.wrench_keys:
-                wrench_shape = self.key_shape_map.get(wrench_key, (6, 32))  # Default (6, 32)
-                wrench_axis = wrench_shape[0]  # Get actual axis count
-                wrench_hist_dict[wrench_key] = np.zeros((wrench_axis, 32), dtype=np.float32)
-
         # return obs
         obs_data = dict(camera_obs)
         obs_data.update(robot_obs)
-        obs_data.update(wrench_hist_dict) 
         obs_data['timestamp'] = obs_align_timestamps
         return obs_data
     
@@ -519,4 +507,3 @@ class DualarmRealEnv:
         if this_video_dir.exists():
             shutil.rmtree(str(this_video_dir))
         print(f'Episode {episode_id} dropped!')
-

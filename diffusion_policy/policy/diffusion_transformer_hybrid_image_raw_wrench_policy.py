@@ -487,9 +487,9 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             # feature 별로 나눠서 보기; 필요없긴 함
             token_sizes = [x.shape[1] for x in modality_features]
             attended_modalities = list(torch.split(out_embeds, token_sizes, dim=1))
-            attended_vision = attended_modalities[:len(self.rgb_keys)]
-            attended_low_dim = attended_modalities[len(self.rgb_keys)]
-            attended_force = attended_modalities[len(self.rgb_keys) + 1]
+            # attended_vision = attended_modalities[:len(self.rgb_keys)]
+            # attended_low_dim = attended_modalities[len(self.rgb_keys)]
+            # attended_force = attended_modalities[len(self.rgb_keys) + 1]
             token_num = sum(token_sizes)
 
             nobs_features = out_embeds
@@ -565,7 +565,11 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             weight_decay=weight_decay)
         
         # obs encoder from scratch
-        modules = [self.force_encoder, self.low_dim_encoder]
+        modules = []
+        if hasattr(self, 'force_encoder'):
+            modules.append(self.force_encoder)
+        if hasattr(self, 'low_dim_encoder'):
+            modules.append(self.low_dim_encoder)
         if hasattr(self, 'attention_pool_2d'):
             modules.append(self.attention_pool_2d)
         if hasattr(self, 'transformer_encoder'):
@@ -681,9 +685,9 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             # feature 별로 나눠서 보기; 필요없긴 함
             token_sizes = [x.shape[1] for x in modality_features]
             attended_modalities = list(torch.split(out_embeds, token_sizes, dim=1))
-            attended_vision = attended_modalities[:len(self.rgb_keys)]
-            attended_low_dim = attended_modalities[len(self.rgb_keys)]
-            attended_force = attended_modalities[len(self.rgb_keys) + 1]
+            # attended_vision = attended_modalities[:len(self.rgb_keys)]
+            # attended_low_dim = attended_modalities[len(self.rgb_keys)]
+            # attended_force = attended_modalities[len(self.rgb_keys) + 1]
             token_num = sum(token_sizes)
 
             nobs_features = out_embeds # (B, token_num, feature_dim)

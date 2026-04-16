@@ -1,7 +1,7 @@
 name: bbbae_dualarm_erase_board_with_raw_wrench
 
 image_shape: [3, 224, 224]
-dataset_path: /data/baetae/260416/diffusion_data_erase_board_R_image_raw_wrench.hdf5
+dataset_path: data/baetae/260416/diffusion_data_erase_board_R_image_raw_wrench.hdf5
 
 # relative
 low_dim_obs_horizon: 2
@@ -47,35 +47,35 @@ shape_meta: &shape_meta
       type: low_dim
       horizon: ${task.low_dim_obs_horizon}
       
-    wrench_wrist_R:
-      shape: [6]
-      type: low_dim
-      horizon: ${task.low_dim_obs_horizon}
+    #wrench_wrist_R:
+    #  shape: [6]
+    #  type: low_dim
+    #  horizon: ${task.low_dim_obs_horizon}
       
-    wrench_thumb_R:
-      shape: [1]
-      type: low_dim
-      horizon: ${task.low_dim_obs_horizon}
+    #wrench_thumb_R:
+    #  shape: [1]
+    #  type: low_dim
+    #  horizon: ${task.low_dim_obs_horizon}
       
-    wrench_index_R:
-      shape: [1]
-      type: low_dim
-      horizon: ${task.low_dim_obs_horizon}
+    #wrench_index_R:
+    #  shape: [1]
+    #  type: low_dim
+    #  horizon: ${task.low_dim_obs_horizon}
       
-    wrench_middle_R:
-      shape: [1]
-      type: low_dim
-      horizon: ${task.low_dim_obs_horizon}
+    #wrench_middle_R:
+    #  shape: [1]
+    #  type: low_dim
+    #  horizon: ${task.low_dim_obs_horizon}
       
-    wrench_ring_R:
-      shape: [1]
-      type: low_dim
-      horizon: ${task.low_dim_obs_horizon}
+    #wrench_ring_R:
+    #  shape: [1]
+    #  type: low_dim
+    #  horizon: ${task.low_dim_obs_horizon}
       
-    wrench_baby_R:
-      shape: [1]
-      type: low_dim  
-      horizon: ${task.low_dim_obs_horizon}
+    #wrench_baby_R:
+    #  shape: [1]
+    #  type: low_dim  
+    #  horizon: ${task.low_dim_obs_horizon}
     
   action: 
     shape: [20] # robot_pose_R[3] + robot_rot6d_R[6] + hand_pose_R[11]
