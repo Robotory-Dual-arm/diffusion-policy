@@ -92,8 +92,9 @@ class TransformerForDiffusion(ModuleAttrMixin):
             n_obs_steps = horizon
         
         ##### 임시
+        raw_wrench = True
         no_image = False
-        one_image = False
+        one_image = True
 
         T = horizon
         if obs_as_cond:
@@ -103,8 +104,12 @@ class TransformerForDiffusion(ModuleAttrMixin):
 
             if no_image:
                 T_cond = n_obs_steps * (1) + 1 + 1  # 4
+                if raw_wrench:
+                    T_cond = n_obs_steps * (1) + 1 # 3
             if one_image:
                 T_cond = n_obs_steps * (1 + 1) + 1 + 1  # 6
+                if raw_wrench:
+                    T_cond = n_obs_steps * (1 + 1) + 1 # 5
 
         
         # input embedding stem
@@ -207,6 +212,8 @@ class TransformerForDiffusion(ModuleAttrMixin):
                     x_list = [(0, 2), (0, 3)]
                 if one_image:
                     x_list = [(0, 2), (0, 4), (0, 5)]
+                    if raw_wrench:
+                        x_list = [(0, 2), (0, 4)]
 
                 for ti, si in x_list:
                     if 0 <= ti < T and 0 <= si < S:

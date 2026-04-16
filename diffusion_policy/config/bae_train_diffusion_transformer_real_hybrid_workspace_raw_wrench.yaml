@@ -19,7 +19,7 @@ keypoint_visible_rate: 1.0
 obs_as_cond: True
 
 policy:
-  _target_: diffusion_policy.policy.diffusion_transformer_hybrid_image_wrench_encoder_policy.DiffusionTransformerHybridImagePolicy
+  _target_: diffusion_policy.policy.diffusion_transformer_hybrid_image_raw_wrench_policy.DiffusionTransformerHybridImagePolicy
 
   shape_meta: ${shape_meta}
   
@@ -35,23 +35,24 @@ policy:
     clip_sample: True
     set_alpha_to_one: True
     steps_offset: 0
-    prediction_type: v_prediction # or sample or v_prediction
+    prediction_type: epsilon # or sample or v_prediction
 
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
   num_inference_steps: 16
 
-  # crop_shape: [216, 288] # ch, cw 320x240 90%
-  # obs_encoder_group_norm: True
-  # eval_fixed_crop: True
+  #crop_shape: [216, 288] # ch, cw 320x240 90%
+  #crop_shape: [210, 210]
+  #obs_encoder_group_norm: True
+  #eval_fixed_crop: True
 
   n_layer: 7
   n_cond_layers: 0  # >0: use transformer encoder for cond, otherwise use MLP
-  n_head: 4  # 6이 더 좋다는 말도 있네요 (ScaleDP)
-  n_emb: 512 # token 밑에 vision, force feature랑 맞춰야된다
+  n_head: 4
+  n_emb: 512
   p_drop_emb: 0.0
-  p_drop_attn: 0.1 # 0.3
+  p_drop_attn: 0.1
   causal_attn: True
   time_as_cond: True # if false, use BERT like encoder only arch, time as input
   obs_as_cond: ${obs_as_cond}
@@ -70,13 +71,14 @@ policy:
       #model_name: 'vit_base_patch32_clip_224.openai'
       pretrained: False
       frozen: False
+      use_group_norm: True # if resnet from scratch
       global_pool: ''
       feature_aggregation: 'attention_pool_2d'
     
       # use for resnet. 32 (7x7) feature_dim=512 // 16 (14x14) feature_dim=256
       downsample_ratio: 32
       
-      use_group_norm: True # if resnet from scratch
+      
     
       transforms:
         randomcrop:
@@ -93,7 +95,7 @@ policy:
     force_encoder_cfg:
       model_name: causalconv # causalconv or gru
       feature_dim: 512 # vision_feature_dim 이랑 맞춰줘야 modality-attention 가능
-      
+
 ema:
   _target_: diffusion_policy.model.diffusion.ema_model.EMAModel
   update_after_step: 0
@@ -116,18 +118,12 @@ val_dataloader:
   pin_memory: True
   persistent_workers: True
 
-# backbone model을 쓰냐 안쓰냐가 중요
 optimizer:
-  #transformer_weight_decay: 1.0e-3
-  #obs_encoder_weight_decay: 1.0e-6
-  #learning_rate: 1.0e-4
-  #betas: [0.9, 0.95]
-  
   # transformer & other models
-  lr: 5.0e-4
+  lr: 3.0e-4
   weight_decay: 1.0e-6
   # pretrained image model
-  obs_encoder_lr: 5.0e-4
+  obs_encoder_lr: 3.0e-4
   obs_encoder_weight_decay: 1.0e-6
   
   betas: [0.9, 0.999] 
@@ -141,7 +137,7 @@ training:
   lr_scheduler: cosine
   # Transformer needs LR warmup
   lr_warmup_steps: 500
-  num_epochs: 1000
+  num_epochs: 2000
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
@@ -171,7 +167,7 @@ checkpoint:
   topk:
     monitor_key: train_loss
     mode: min
-    k: 10
+    k: 20
     format_str: 'epoch={epoch:04d}-train_loss={train_loss:.3f}.ckpt'
   save_last_ckpt: True
   save_last_snapshot: False

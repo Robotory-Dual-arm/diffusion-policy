@@ -262,11 +262,11 @@ class Dualarm(Node):
                                            + (1-a) * latest_wrench_fingers_R[i] for i in range(5)]
             
             # for usage
-            latest_wrench_thumb_R = latest_wrench_fingers_R[0] # fx,fy,fz,tx,ty,tz
+            latest_wrench_thumb_R = latest_wrench_fingers_R[0][2:3] # fz
             latest_wrench_index_R = latest_wrench_fingers_R[1][2:3] # fz
             latest_wrench_middle_R = latest_wrench_fingers_R[2][2:3] # fz
             latest_wrench_ring_R = latest_wrench_fingers_R[3][2:3] # fz
-            latest_wrench_baby_R = latest_wrench_fingers_R[4] # fx,fy,fz,tx,ty,tz
+            latest_wrench_baby_R = latest_wrench_fingers_R[4][2:3] # fz
 
         # ===== Append to 32-frame history (thread-safe) =====
         if self.wrench_calibrated:
@@ -449,26 +449,63 @@ class DualarmInterpolationController(mp.Process):
 
         # build ring buffer; state 담아놓을 메모리
         if receive_keys is None:
-            receive_keys = [
-                # 'robot_pose_L',
-                # 'robot_quat_L',
-                'robot_pose_R',
-                'robot_quat_R',
-                # 'hand_pose_L',
-                'hand_pose_R'
-            ]
+            receive_keys = []
+            if shape_meta is not None:
+                for key, obs in shape_meta.get('obs', {}).items():
+                    obs_type = obs.get('type', 'low_dim')
+                    if obs_type in ('low_dim', 'wrench'):
+                        receive_keys.append(key)
+
+            if len(receive_keys) == 0:
+                receive_keys = [
+                    # 'robot_pose_L',
+                    # 'robot_quat_L',
+                    'robot_pose_R',
+                    'robot_quat_R',
+                    # 'hand_pose_L',
+                    'hand_pose_R',
+                    'wrench_wrist_R',
+                    'wrench_thumb_R',
+                    'wrench_index_R',
+                    'wrench_middle_R',
+                    'wrench_ring_R',
+                    'wrench_baby_R'
+                ]
         
         example = dict()
+        default_obs_shapes = {
+            'robot_pose_R': (3,),
+            'robot_quat_R': (4,),
+            'hand_pose_R': (11,),
+            'wrench_wrist_R': (6, 32),
+            'wrench_thumb_R': (1, 32),
+            'wrench_index_R': (1, 32),
+            'wrench_middle_R': (1, 32),
+            'wrench_ring_R': (1, 32),
+            'wrench_baby_R': (1, 32),
+        }
         for key in receive_keys:
-            
+            shape = None
+
             # shape_meta에서 각 키의 shape 정보를 읽어오기
             if shape_meta is not None and key in shape_meta.get('obs', {}):
                 obs = shape_meta['obs'][key]
                 obs_type = obs.get('type', 'low_dim')  # 기본값은 'low_dim'
 
                 if obs_type == 'low_dim':
-                    shape = obs.get('shape', None)
-                    example[key] = np.zeros((shape[0],), dtype=np.float64)
+                    obs_shape = obs.get('shape', None)
+                    if obs_shape is not None:
+                        shape = (obs_shape[0],)
+                elif obs_type == 'wrench':
+                    obs_shape = obs.get('shape', None)
+                    if obs_shape is not None:
+                        shape = tuple(obs_shape)
+
+            if shape is None and key in default_obs_shapes:
+                shape = default_obs_shapes[key]
+
+            if shape is not None:
+                example[key] = np.zeros(shape, dtype=np.float64)
                        
                          
         example['robot_receive_timestamp'] = time.time()
@@ -630,14 +667,14 @@ class DualarmInterpolationController(mp.Process):
             cmd_index = 0
 
             while keep_running:   # 루프 시작
-                executor.spin_once(timeout_sec=0.001)
+                
                 # start control iteration
                 # send command to robot
                 t_now = time.monotonic()
                 # diff = t_now - pose_interp.times[-1]
                 # if diff > 0:
                 #     print('extrapolate', diff)
-                
+                executor.spin_once(timeout_sec=0.001)
                 pose_command = pose_interp(t_now)   # 보간 해놓고 현재 시간의 목표 pose 가져옴
             
                 # 두산 로봇 제어                
@@ -685,6 +722,8 @@ class DualarmInterpolationController(mp.Process):
                 # curr_tcp_rotvec_L = R.from_quat(curr_tcp_quat_L).as_rotvec()
                 curr_tcp_rotvec_R = R.from_quat(curr_tcp_quat_R).as_rotvec()
                 # curr_pose = np.concatenate([curr_tcp_pose_L, curr_tcp_rotvec_L, curr_tcp_pose_R, curr_tcp_rotvec_R])
+
+                wrench_hist_dict = node.get_wrench_hist_32(shape_meta=self.shape_meta)
                 
                 # 현재 State 저장
                 # update robot state; ringbuffer에 state 저장
@@ -703,6 +742,8 @@ class DualarmInterpolationController(mp.Process):
                     #     state[key] = np.array(curr_hand_L)
                     elif key == 'hand_pose_R':
                         state[key] = np.array(curr_hand_R)
+                    elif key in wrench_hist_dict:
+                        state[key] = np.array(wrench_hist_dict[key], dtype=np.float64)
                     
                 state['robot_receive_timestamp'] = time.time()
                 self.ring_buffer.put(state)   
@@ -767,7 +808,7 @@ class DualarmInterpolationController(mp.Process):
                         break
                                 
                 # regulate frequency
-                t_elapsed = time.monotonic() - t_start
+                t_elapsed = time.monotonic() - t_now
                 sleep_time = dt - t_elapsed
                 if sleep_time > 0:
                     time.sleep(sleep_time)   # 수동 제어 주기
@@ -777,8 +818,6 @@ class DualarmInterpolationController(mp.Process):
                     self.ready_event.set()   # 준비완료; wait하던거 실행됨
                 iter_idx += 1
 
-                if self.verbose:
-                    print(f"[RTDEPositionalController] Actual frequency {1/(time.perf_counter() - t_start)}")
 
         finally:
             # terminate

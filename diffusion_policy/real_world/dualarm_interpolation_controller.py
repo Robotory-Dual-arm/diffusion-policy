@@ -615,7 +615,7 @@ class DualarmInterpolationController(mp.Process):
                         break
                                 
                 # regulate frequency
-                t_elapsed = time.monotonic() - t_start
+                t_elapsed = time.monotonic() - t_now
                 sleep_time = dt - t_elapsed
                 if sleep_time > 0:
                     time.sleep(sleep_time)   # 수동 제어 주기
