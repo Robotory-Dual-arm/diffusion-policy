@@ -47,9 +47,9 @@ policy:
   #obs_encoder_group_norm: True
   #eval_fixed_crop: True
 
-  n_layer: 7
-  n_cond_layers: 0  # >0: use transformer encoder for cond, otherwise use MLP
-  n_head: 4
+  n_layer: 6
+  n_cond_layers: 6  # >0: use transformer encoder for cond, otherwise use MLP
+  n_head: 8
   n_emb: 512
   p_drop_emb: 0.0
   p_drop_attn: 0.1
@@ -62,8 +62,8 @@ policy:
   pose_repr: ${task.pose_repr}
   
   obs_encoder:
-    fuse_mode: modality-attention # modality-attention or concat
-    position_encoding: learnable
+    #fuse_mode: modality-attention # modality-attention or concat
+    #position_encoding: learnable
     
     
     vision_encoder_cfg:
@@ -73,11 +73,10 @@ policy:
       frozen: False
       use_group_norm: True # if resnet from scratch
       global_pool: ''
-      feature_aggregation: 'attention_pool_2d'
+      feature_aggregation: 'spatial_tokens_2d' # 걍 flatten
     
       # use for resnet. 32 (7x7) feature_dim=512 // 16 (14x14) feature_dim=256
       downsample_ratio: 32
-      
       
     
       transforms:

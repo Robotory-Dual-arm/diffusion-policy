@@ -51,50 +51,7 @@ data
             wrench_baby_R   # N, len=(1, 32) (fz)
 """
 
-# 데이터 초기에 wrench 값 10개 평균을 0set으로 맞추기
-# 초반에 wrench가 24개 먼저 시작 25번째에 image랑 sync -> wrench값 32개씩 []로 묶기
-#         img         img         img
-# [f f f f f] [f f f f f] [f f f f f]
 
-### Diffusion image 변환인데, 참고해서 활용하기!!!
-# def get_image_transform(
-#         input_res: Tuple[int,int]=(640,480), 
-#         output_res: Tuple[int,int]=(320,240), 
-#         bgr_to_rgb: bool=False):
-
-#     iw, ih = input_res
-#     ow, oh = output_res
-#     rw, rh = None, None
-#     interp_method = cv2.INTER_AREA
-
-#     if (iw/ih) >= (ow/oh):
-#         # input is wider
-#         rh = oh
-#         rw = math.ceil(rh / ih * iw)
-#         if oh > ih:
-#             interp_method = cv2.INTER_LINEAR
-#     else:
-#         rw = ow
-#         rh = math.ceil(rw / iw * ih)
-#         if ow > iw:
-#             interp_method = cv2.INTER_LINEAR
-    
-#     w_slice_start = (rw - ow) // 2
-#     w_slice = slice(w_slice_start, w_slice_start + ow)
-#     h_slice_start = (rh - oh) // 2
-#     h_slice = slice(h_slice_start, h_slice_start + oh)
-#     c_slice = slice(None)
-#     if bgr_to_rgb:
-#         c_slice = slice(None, None, -1)
-
-#     def transform(img: np.ndarray):
-#         assert img.shape == ((ih,iw,3))
-#         # resize
-#         img = cv2.resize(img, (rw, rh), interpolation=interp_method)
-#         # crop
-#         img = img[h_slice, w_slice, c_slice]
-#         return img
-#     return transform
 def get_image_transform(
     input_res: Tuple[int, int] = (640, 480),
     output_res: Tuple[int, int] = (224, 224),
@@ -175,8 +132,8 @@ def ema_filter(wrench_data, alpha):
     return np.asarray(result)
 
 def main():
-    input_filenames = ['/home/baetae/Downloads/common_data_erase_board.hdf5']
-    output_filename = '/data/baetae/260416/diffusion_data_erase_board_R_image_raw_wrench.hdf5'
+    input_filenames = ['/home/baetae/Downloads/common_data1.hdf5', '/home/baetae/Downloads/common_data2.hdf5']
+    output_filename = '/data/baetae/260419/diffusion_data_erase_board_R_image_raw_wrench.hdf5'
     output_demo_idx = 0
     transform = get_image_transform(input_res=(640,480), output_res=(224,224), bgr_to_rgb=True)
 
