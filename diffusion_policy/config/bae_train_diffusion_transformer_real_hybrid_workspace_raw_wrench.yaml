@@ -53,7 +53,7 @@ policy:
   n_emb: 512
   p_drop_emb: 0.0
   p_drop_attn: 0.1
-  causal_attn: True
+  causal_attn: False
   time_as_cond: True # if false, use BERT like encoder only arch, time as input
   obs_as_cond: ${obs_as_cond}
 

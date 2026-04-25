@@ -1,7 +1,7 @@
-name: bbbae_dualarm_erase_board_with_raw_wrench
+name: bbbae_dualarm_erase_board_with_no_wrench
 
 image_shape: [3, 224, 224]
-dataset_path: data/baetae/260416/diffusion_data_erase_board_R_image_raw_wrench.hdf5
+dataset_path: /data/baetae/260419/diffusion_data_erase_board_R_image_raw_wrench.hdf5
 
 # relative
 low_dim_obs_horizon: 2
@@ -101,7 +101,7 @@ dataset:
   # n_latency_steps: ${n_latency_steps}
   use_cache: True
   seed: 42
-  val_ratio: 0.00
+  val_ratio: 0.03
   # max_train_episodes: null
   # delta_action: False
   pose_repr: *pose_repr
