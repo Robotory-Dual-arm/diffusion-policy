@@ -331,10 +331,13 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
     # ========= inference  ============
 
     def _apply_image_transform(self, obs_dict, transform):
+        transformed_obs = dict(obs_dict)
         for key in self.rgb_keys:
-            img = obs_dict[key].reshape(-1, *obs_dict[key].shape[2:])
+            obs = obs_dict[key]
+            img = obs.reshape(-1, *obs.shape[2:])
             img = transform(img)
-            obs_dict[key] = img.reshape(*obs_dict[key].shape[:2], *img.shape[1:])
+            transformed_obs[key] = img.reshape(*obs.shape[:2], *img.shape[1:])
+        return transformed_obs
 
     def _image_feature_to_tokens(
             self,
@@ -410,8 +413,8 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         """
         assert 'past_action' not in obs_dict # not implemented yet
         
-        # image crop, resize, colorjitter
-        self._apply_image_transform(obs_dict, self.transform_eval)
+        # image crop, resize
+        obs_dict = self._apply_image_transform(obs_dict, self.transform_eval)
         
 
         # normalize input
@@ -599,10 +602,9 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         assert 'valid_mask' not in batch
 
         # image crop, resize, colorjitter
-        self._apply_image_transform(batch['obs'], self.transform_train)
+        obs_dict = self._apply_image_transform(batch['obs'], self.transform_train)
 
-
-        nobs = self.normalizer.normalize(batch['obs'])
+        nobs = self.normalizer.normalize(obs_dict)
         nactions = self.normalizer['action'].normalize(batch['action'])
         To = self.n_obs_steps
         B = nactions.shape[0]

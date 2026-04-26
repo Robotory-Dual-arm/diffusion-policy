@@ -73,7 +73,7 @@ policy:
       frozen: False
       use_group_norm: True # if resnet from scratch
       global_pool: ''
-      feature_aggregation: 'spatial_tokens_2d' # 걍 flatten
+      feature_aggregation: 'attention_pool_2d' 
     
       # use for resnet. 32 (7x7) feature_dim=512 // 16 (14x14) feature_dim=256
       downsample_ratio: 32

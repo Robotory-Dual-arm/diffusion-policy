@@ -383,6 +383,16 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         return trajectory
 
 
+    def _apply_image_transform(self, obs_dict, transform):
+        transformed_obs = dict(obs_dict)
+        for key in self.rgb_keys:
+            obs = obs_dict[key]
+            img = obs.reshape(-1, *obs.shape[2:])
+            img = transform(img)
+            transformed_obs[key] = img.reshape(*obs.shape[:2], *img.shape[1:])
+        return transformed_obs
+
+
     def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """
         obs_dict: must include "obs" key
@@ -394,11 +404,8 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         # ['robot_pose_L'] = [[pose_L_t-1], [pose_L_t]]
         # ['wrench_wrist_R'] = [[wrench_wrist_hist_32]]
 
-        # image crop, resize, colorjitter
-        for i in range(self.num_image):
-            img = obs_dict[f'image{i}'].reshape(-1, *obs_dict[f'image{i}'].shape[2:])
-            img = self.transform_eval(img)
-            obs_dict[f'image{i}'] = img.reshape(*obs_dict[f'image{i}'].shape[:])
+        # image crop, resize
+        obs_dict = self._apply_image_transform(obs_dict, self.transform_eval)
 
 
         # normalize input
@@ -534,13 +541,9 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         assert 'valid_mask' not in batch
 
         # image crop, resize, colorjitter
-        for i in range(self.num_image):
-            img = batch['obs'][f'image{i}'].reshape(-1, *batch['obs'][f'image{i}'].shape[2:])
-            img = self.transform_train(img)
-            batch['obs'][f'image{i}'] = img.reshape(*batch['obs'][f'image{i}'].shape[:])
-            
+        obs_dict = self._apply_image_transform(batch['obs'], self.transform_train)
 
-        nobs = self.normalizer.normalize(batch['obs'])
+        nobs = self.normalizer.normalize(obs_dict)
         nactions = self.normalizer['action'].normalize(batch['action'])
         B = nactions.shape[0]
         T = nactions.shape[1]

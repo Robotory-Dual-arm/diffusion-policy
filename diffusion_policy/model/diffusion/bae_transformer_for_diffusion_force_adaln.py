@@ -1,7 +1,6 @@
 import copy
 import math
-import inspect
-from typing import Union, Optional, Tuple, Any, cast
+from typing import Union, Optional, Tuple
 import logging
 import torch
 import torch.nn as nn
@@ -41,30 +40,26 @@ def print_attn_mask_grid(mask: torch.Tensor, name: str = "mask"):
             row.append(" O" if allowed[i, j] else " X")
         print(f"{i:2d}: " + "".join(row))
 
-class ShiftScaleMod(nn.Module):
-    def __init__(self, cond_dim: int, hidden_dim: int):
-        super().__init__()
-        self.act = nn.SiLU()
-        self.scale = nn.Linear(cond_dim, hidden_dim)
-        self.shift = nn.Linear(cond_dim, hidden_dim)
 
-    def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
-        cond = self.act(cond)
-        scale = self.scale(cond).unsqueeze(1)
-        shift = self.shift(cond).unsqueeze(1)
-        return x * scale + shift
+def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
 
-class ZeroScaleMod(nn.Module):
-    def __init__(self, cond_dim: int, hidden_dim: int):
-        super().__init__()
-        self.act = nn.SiLU()
-        self.scale = nn.Linear(cond_dim, hidden_dim)
+def get_activation(activation: str) -> nn.Module:
+    if activation == "relu":
+        return nn.ReLU()
+    if activation == "gelu":
+        return nn.GELU(approximate="tanh")
+    raise RuntimeError(f"activation should be relu/gelu, not {activation}.")
 
-    def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
-        cond = self.act(cond)
-        scale = self.scale(cond).unsqueeze(1)
-        return x * scale
+
+def zero_linear_chunk(linear: nn.Linear, chunk_index: int, num_chunks: int):
+    chunk_size = linear.out_features // num_chunks
+    start = chunk_index * chunk_size
+    end = start + chunk_size
+    torch.nn.init.zeros_(linear.weight[start:end])
+    if linear.bias is not None:
+        torch.nn.init.zeros_(linear.bias[start:end])
 
 
 class ConditionSelfAttnEncoderLayer(nn.Module):
@@ -97,14 +92,7 @@ class ConditionSelfAttnEncoderLayer(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
         self.dropout3 = nn.Dropout(dropout)
 
-        if activation == "relu":
-            self.activation = nn.ReLU()
-        elif activation == "gelu":
-            self.activation = nn.GELU(approximate="tanh")
-        else:
-            raise RuntimeError(
-                f"activation should be relu/gelu, not {activation}."
-            )
+        self.activation = get_activation(activation)
 
     def forward(self, src: torch.Tensor, pos: Optional[torch.Tensor] = None):
         q = k = src if pos is None else src + pos
@@ -134,12 +122,45 @@ class CachedTransformerEncoder(nn.Module):
         return outputs
 
 
+class TimestepConditionPool(nn.Module):
+    def __init__(self, d_model: int, nhead: int, dropout: float = 0.1):
+        super().__init__()
+        self.query_norm = nn.LayerNorm(d_model)
+        self.token_norm = nn.LayerNorm(d_model)
+        self.attn = nn.MultiheadAttention(
+            d_model,
+            nhead,
+            dropout=dropout,
+            batch_first=True,
+        )
+
+    def forward(
+        self,
+        tokens: torch.Tensor,
+        timestep_emb: torch.Tensor,
+    ) -> torch.Tensor:
+        query = self.query_norm(timestep_emb).unsqueeze(1)
+        tokens = self.token_norm(tokens)
+        pooled, _ = self.attn(query, tokens, tokens, need_weights=False)
+        return pooled + timestep_emb.unsqueeze(1)
+
+
 class LayerWiseAdaLNTransformerDecoder(nn.Module):
     def __init__(self, decoder_layer: nn.Module, num_layers: int):
         super().__init__()
         self.layers = nn.ModuleList(
             [copy.deepcopy(decoder_layer) for _ in range(num_layers)]
         )
+
+    def _expand_conditions(self, memory):
+        conds = list(memory) if isinstance(memory, (list, tuple)) else [memory]
+        if len(conds) == 0:
+            raise RuntimeError("Decoder condition list is empty.")
+        if len(conds) > len(self.layers):
+            conds = conds[-len(self.layers):]
+        if len(conds) < len(self.layers):
+            conds = conds + [conds[-1]] * (len(self.layers) - len(conds))
+        return conds
 
     def forward(
         self,
@@ -152,29 +173,14 @@ class LayerWiseAdaLNTransformerDecoder(nn.Module):
         tgt_is_causal: bool = False,
         memory_is_causal: bool = False,
     ):
-        if isinstance(memory, (list, tuple)):
-            conds = list(memory)
-        else:
-            conds = [memory]
-
-        if len(conds) == 0:
-            raise RuntimeError("Decoder condition list is empty.")
-        if len(conds) > len(self.layers):
-            conds = conds[-len(self.layers):]
-        if len(conds) < len(self.layers):
-            conds = conds + [conds[-1]] * (len(self.layers) - len(conds))
-
         x = tgt
-        for layer, layer_cond in zip(self.layers, conds):
+        for layer, cond in zip(self.layers, self._expand_conditions(memory)):
             x = layer(
-                tgt=x,
-                memory=layer_cond,
-                tgt_mask=tgt_mask,
-                memory_mask=memory_mask,
-                tgt_key_padding_mask=tgt_key_padding_mask,
-                memory_key_padding_mask=memory_key_padding_mask,
-                tgt_is_causal=tgt_is_causal,
-                memory_is_causal=memory_is_causal,
+                x,
+                cond,
+                attn_mask=tgt_mask,
+                key_padding_mask=tgt_key_padding_mask,
+                is_causal=tgt_is_causal,
             )
         return x
 
@@ -193,126 +199,108 @@ class FinalAdaLNLayer(nn.Module):
 
     def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
         shift, scale = self.adaLN_modulation(cond).chunk(2, dim=-1)
-        x = x * scale.unsqueeze(1) + shift.unsqueeze(1)
+        x = modulate(self.norm_final(x), shift, scale)
         return self.linear(x)
 
-#####
-class CustomizedTransformerDecoderLayer(nn.TransformerDecoderLayer):
+class AdaLNDecoderLayer(nn.Module):
     """
-    nn.TransformerDecoderLayer 확장 버전.
-    - cross-attn 제거
-    - forward에서 미리 만든 cond vector로 self-attn / FFN residual을 adaLN-Zero modulation
+    DiT-style decoder block.
+    cond -> beta/scale/gate for self-attention and MLP.
     """
-    def __init__(self, *args, n_cond_tokens: int, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.capture_cross_attention_weights = False
-        self.last_cross_attn_weights = None
-        self.n_cond_tokens = n_cond_tokens
+    def __init__(
+        self,
+        d_model: int,
+        nhead: int,
+        dim_feedforward: int,
+        dropout: float = 0.1,
+        activation: str = "gelu",
+    ):
+        super().__init__()
+        self.self_attn = nn.MultiheadAttention(
+            d_model,
+            nhead,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.norm1 = nn.LayerNorm(d_model, elementwise_affine=False, eps=1e-6)
+        self.norm2 = nn.LayerNorm(d_model, elementwise_affine=False, eps=1e-6)
+        self.mlp = nn.Sequential(
+            nn.Linear(d_model, dim_feedforward),
+            get_activation(activation),
+            nn.Dropout(dropout),
+            nn.Linear(dim_feedforward, d_model),
+        )
+        self.dropout_attn = nn.Dropout(dropout)
+        self.dropout_mlp = nn.Dropout(dropout)
+        self.adaLN_modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(d_model, 6 * d_model),
+        )
 
-        d_model = self.self_attn.embed_dim
-        cond_dim = d_model
-        self.attn_mod1 = ShiftScaleMod(cond_dim, d_model)
-        self.attn_mod2 = ZeroScaleMod(cond_dim, d_model)
-        self.mlp_mod1 = ShiftScaleMod(cond_dim, d_model)
-        self.mlp_mod2 = ZeroScaleMod(cond_dim, d_model)
-        self.multihead_attn = nn.Identity() # parameter 제거
-        self.norm3 = nn.Identity() # parameter 제거
-
-    def enable_cross_attention_weights(self, enabled: bool = True):
-        self.capture_cross_attention_weights = enabled
-        if not enabled:
-            self.last_cross_attn_weights = None
-
-    def _get_cond(self, memory):
-        self.last_cross_attn_weights = None
-        if memory is None:
-            raise RuntimeError("Condition tokens are required for adaLN-Zero decoder.")
-
-        if memory.dim() != 3:
+    def _condition_vector(self, cond: torch.Tensor) -> torch.Tensor:
+        if cond is None:
+            raise RuntimeError("Condition tokens are required for AdaLN decoder.")
+        if cond.dim() != 3 or cond.shape[1] != 1:
             raise RuntimeError(
-                f"Expected condition tensor with shape (B, T_cond, C), got {tuple(memory.shape)}"
+                f"Expected condition shape (B, 1, C), got {tuple(cond.shape)}."
             )
-        if memory.shape[1] != self.n_cond_tokens:
-            raise RuntimeError(
-                f"Expected {self.n_cond_tokens} condition tokens, got {memory.shape[1]}"
-            )
+        return cond.squeeze(1)
 
-        return memory.squeeze(1)
-
-    def _sa_block_compat(
+    def _self_attention(
         self,
         x: torch.Tensor,
         attn_mask: Optional[torch.Tensor],
         key_padding_mask: Optional[torch.Tensor],
         is_causal: bool,
     ) -> torch.Tensor:
-        """
-        PyTorch version compatibility wrapper.
-        - torch>=2.x: _sa_block(x, attn_mask, key_padding_mask, is_causal=...)
-        - torch<=1.13: _sa_block(x, attn_mask, key_padding_mask)
-        """
-        sa_block = cast(Any, self._sa_block)
-        sa_sig = inspect.signature(sa_block)
-        if "is_causal" in sa_sig.parameters:
-            return sa_block(
+        try:
+            out, _ = self.self_attn(
                 x,
-                attn_mask,
-                key_padding_mask,
-                is_causal,
+                x,
+                x,
+                attn_mask=attn_mask,
+                key_padding_mask=key_padding_mask,
+                need_weights=False,
+                is_causal=is_causal,
             )
-
-        return sa_block(
-            x,
-            attn_mask,
-            key_padding_mask,
-        )
+        except TypeError:
+            out, _ = self.self_attn(
+                x,
+                x,
+                x,
+                attn_mask=attn_mask,
+                key_padding_mask=key_padding_mask,
+                need_weights=False,
+            )
+        return out
 
     def forward(
         self,
-        tgt,
-        memory,
-        tgt_mask=None,
-        memory_mask=None,
-        tgt_key_padding_mask=None,
-        memory_key_padding_mask=None,
-        tgt_is_causal: bool = False,
-        memory_is_causal: bool = False,
-    ):
-        x = tgt
-        cond = self._get_cond(memory)
-        if self.norm_first:
-            x2 = self.attn_mod1(self.norm1(x), cond) # norm -> scale, shift
-            x2 = self._sa_block_compat( # self-attn
-                x2,
-                tgt_mask,
-                tgt_key_padding_mask,
-                is_causal=tgt_is_causal,
-            )
-            x = x + self.attn_mod2(x2, cond) # scale
+        x: torch.Tensor,
+        cond: torch.Tensor,
+        attn_mask: Optional[torch.Tensor] = None,
+        key_padding_mask: Optional[torch.Tensor] = None,
+        is_causal: bool = False,
+    ) -> torch.Tensor:
+        cond = self._condition_vector(cond)
+        shift_attn, scale_attn, gate_attn, shift_mlp, scale_mlp, gate_mlp = (
+            self.adaLN_modulation(cond).chunk(6, dim=-1)
+        )
 
-            x2 = self.mlp_mod1(self.norm2(x), cond) # norm -> scale, shift
-            x2 = self._ff_block(x2) # FFN
-            x = x + self.mlp_mod2(x2, cond) # scale
-        else:
-            x = self.norm1(
-                x + self.attn_mod2(
-                    self._sa_block_compat(
-                        self.attn_mod1(x, cond),
-                        tgt_mask,
-                        tgt_key_padding_mask,
-                        is_causal=tgt_is_causal,
-                    ),
-                    cond,
-                )
-            )
-            x = self.norm2(
-                x + self.mlp_mod2(
-                    self._ff_block(self.mlp_mod1(x, cond)),
-                    cond,
-                )
-            )
+        attn_in = modulate(self.norm1(x), shift_attn, scale_attn)
+        attn_out = self._self_attention(
+            attn_in,
+            attn_mask=attn_mask,
+            key_padding_mask=key_padding_mask,
+            is_causal=is_causal,
+        )
+        x = x + gate_attn.unsqueeze(1) * self.dropout_attn(attn_out)
+
+        mlp_in = modulate(self.norm2(x), shift_mlp, scale_mlp)
+        x = x + gate_mlp.unsqueeze(1) * self.dropout_mlp(self.mlp(mlp_in))
         return x
-#####
+
+
 class TransformerForDiffusion(ModuleAttrMixin):
     def __init__(self,
             input_dim: int,
@@ -377,6 +365,7 @@ class TransformerForDiffusion(ModuleAttrMixin):
 
         self.cond_pos_emb = None
         self.encoder = None
+        self.cond_pool = None
         self.decoder = None
         encoder_only = False
         if T_cond > 0: # True
@@ -405,17 +394,19 @@ class TransformerForDiffusion(ModuleAttrMixin):
                     nn.Mish(),
                     nn.Linear(4 * n_emb, n_emb)
                 )
+            self.cond_pool = TimestepConditionPool(
+                d_model=n_emb,
+                nhead=n_head,
+                dropout=p_drop_attn,
+            )
 
         # decoder : action self attention + adaLN-Zero conditioning
-        decoder_layer = CustomizedTransformerDecoderLayer(
+        decoder_layer = AdaLNDecoderLayer(
             d_model=n_emb,
             nhead=n_head,
             dim_feedforward=4*n_emb,
             dropout=p_drop_attn,
             activation='gelu',
-            n_cond_tokens=1,
-            batch_first=True,
-            norm_first=True # important for stability
         )
         self.decoder = LayerWiseAdaLNTransformerDecoder(
             decoder_layer=decoder_layer,
@@ -464,14 +455,14 @@ class TransformerForDiffusion(ModuleAttrMixin):
             LayerWiseAdaLNTransformerDecoder,
             FinalAdaLNLayer,
             ConditionSelfAttnEncoderLayer,
+            TimestepConditionPool,
+            AdaLNDecoderLayer,
             nn.ModuleList,
             nn.Identity,
             nn.SiLU,
             nn.GELU,
             nn.Mish,
-            nn.Sequential,
-            ShiftScaleMod,
-            ZeroScaleMod)
+            nn.Sequential)
         if isinstance(module, (nn.Linear, nn.Embedding)):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
             if isinstance(module, nn.Linear) and module.bias is not None:
@@ -507,11 +498,10 @@ class TransformerForDiffusion(ModuleAttrMixin):
             return
 
         for layer in self.decoder.layers:
-            if isinstance(layer, CustomizedTransformerDecoderLayer):
-                torch.nn.init.zeros_(layer.attn_mod2.scale.weight)
-                torch.nn.init.zeros_(layer.attn_mod2.scale.bias)
-                torch.nn.init.zeros_(layer.mlp_mod2.scale.weight)
-                torch.nn.init.zeros_(layer.mlp_mod2.scale.bias)
+            if isinstance(layer, AdaLNDecoderLayer):
+                mod_linear = layer.adaLN_modulation[-1]
+                zero_linear_chunk(mod_linear, chunk_index=2, num_chunks=6)
+                zero_linear_chunk(mod_linear, chunk_index=5, num_chunks=6)
 
     def _get_cond_pos_emb(
         self,
@@ -659,7 +649,7 @@ class TransformerForDiffusion(ModuleAttrMixin):
                 else:
                     encoder_outputs = [x]
                 decoder_conds = [
-                    (encoder_output.mean(dim=1) + time_emb).unsqueeze(1)
+                    self.cond_pool(encoder_output, time_emb)
                     for encoder_output in encoder_outputs
                 ]
             else:
