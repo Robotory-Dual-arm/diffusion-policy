@@ -81,11 +81,10 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
         # data 정규화
         normalizer = dataset.get_normalizer() # obs, action의 scale, offset params 들어있음
 
-        # Real에서는 val 안씀
         # configure validation dataset
-        # val_dataset = dataset.get_validation_dataset()
+        val_dataset = dataset.get_validation_dataset()
         # validation용 data를 load하는 인스턴스
-        # val_dataloader = DataLoader(val_dataset, **cfg.val_dataloader)
+        val_dataloader = DataLoader(val_dataset, **cfg.val_dataloader)
 
         self.model.set_normalizer(normalizer)
         if cfg.training.use_ema:
