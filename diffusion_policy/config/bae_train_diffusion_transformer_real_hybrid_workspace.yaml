@@ -47,12 +47,12 @@ policy:
   obs_encoder_group_norm: True
   eval_fixed_crop: True
 
-  n_layer: 8
+  n_layer: 7
   n_cond_layers: 0  # >0: use transformer encoder for cond, otherwise use MLP
   n_head: 4
   n_emb: 256
   p_drop_emb: 0.0
-  p_drop_attn: 0.3
+  p_drop_attn: 0.1
   causal_attn: True
   time_as_cond: True # if false, use BERT like encoder only arch, time as input
   obs_as_cond: ${obs_as_cond}
@@ -69,24 +69,24 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  batch_size: 16
+  batch_size: 24
   num_workers: 8
   shuffle: True
   pin_memory: True
   persistent_workers: True
 
 val_dataloader:
-  batch_size: 16
+  batch_size: 24
   num_workers: 8
   shuffle: False
   pin_memory: True
   persistent_workers: True
 
 optimizer:
-  transformer_weight_decay: 1.0e-3
+  transformer_weight_decay: 1.0e-6
   obs_encoder_weight_decay: 1.0e-6
-  learning_rate: 1.0e-4
-  betas: [0.9, 0.95]
+  learning_rate: 3.0e-4
+  betas: [0.9, 0.999]
 
 training:
   device: "cuda:0"

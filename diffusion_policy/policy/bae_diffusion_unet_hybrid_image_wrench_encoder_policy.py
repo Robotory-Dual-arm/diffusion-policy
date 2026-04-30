@@ -233,10 +233,6 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             vision_feature_dim = 768
 
 
-        ### Low-dim encoder
-        self.low_dim_encoder = nn.Linear(self.num_low_dim_component, vision_feature_dim)
-
-
         ### Force Encoder
         if fc.model_name == 'causalconv':
             force_encoder = CausalConvForceEncoder(
@@ -253,7 +249,9 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         force_feature_dim = fc.feature_dim
 
         # fuse mode
+        self.low_dim_encoder = None
         if obs_encoder.fuse_mode == 'modality-attention':
+            self.low_dim_encoder = nn.Linear(self.num_low_dim_component, vision_feature_dim)
             self.transformer_encoder = torch.nn.TransformerEncoderLayer(
                 d_model=vision_feature_dim,
                 nhead=8,
@@ -278,9 +276,9 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             # attention output tokens are projected to a single embedding vector
             obs_feature_dim = vision_feature_dim
         elif obs_encoder.fuse_mode == 'concat':
-            # low_dim is encoded to vision_feature_dim per step via low_dim_encoder
+            # Keep normalized low_dim state direct, matching the original hybrid policy more closely.
             obs_feature_dim = vision_feature_dim * self.num_image * n_obs_steps \
-                                + vision_feature_dim * n_obs_steps
+                                + self.num_low_dim_component * n_obs_steps
         else:
             raise ValueError(f"Unsupported fuse mode: {obs_encoder.fuse_mode}")
 
@@ -452,7 +450,10 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         low_dim_features = []
         for t in range(To):
             low_dim_t = torch.cat([nobs[key][:,t,:] for key in self.low_dim_keys], dim=-1)
-            low_dim_feature_t = self.low_dim_encoder(low_dim_t)
+            if self.low_dim_encoder is None:
+                low_dim_feature_t = low_dim_t
+            else:
+                low_dim_feature_t = self.low_dim_encoder(low_dim_t)
             low_dim_features.append(low_dim_feature_t.reshape(B, -1))
         low_dim_features = torch.stack(low_dim_features, dim=1)  # (B, To, low_dim_feature_dim)
         modality_features.append(low_dim_features)
@@ -576,11 +577,14 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             vision_features.append(vision_feature.reshape(B, -1)) # (B, To*vision_feature_dim)
             modality_features.append(vision_feature.reshape(B, To, -1)) # (B, To, vision_feature_dim)
 
-        # low-dim encoding (identity)
+        # low-dim encoding
         low_dim_features = []
         for t in range(To):
             low_dim_t = torch.cat([nobs[key][:,t,:] for key in self.low_dim_keys], dim=-1)
-            low_dim_feature_t = self.low_dim_encoder(low_dim_t)
+            if self.low_dim_encoder is None:
+                low_dim_feature_t = low_dim_t
+            else:
+                low_dim_feature_t = self.low_dim_encoder(low_dim_t)
             low_dim_features.append(low_dim_feature_t.reshape(B, -1))
         low_dim_features = torch.stack(low_dim_features, dim=1)  # (B, To, low_dim_feature_dim)
         modality_features.append(low_dim_features)

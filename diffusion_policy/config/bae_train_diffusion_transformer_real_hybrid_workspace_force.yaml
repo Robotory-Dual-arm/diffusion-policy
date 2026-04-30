@@ -61,7 +61,7 @@ policy:
   pose_repr: ${task.pose_repr}
   
   obs_encoder:
-    fuse_mode: modality-attention # modality-attention or concat
+    fuse_mode: concat # modality-attention or concat
     position_encoding: learnable
     
     

@@ -54,14 +54,14 @@ policy:
 
 
   obs_encoder:
-    fuse_mode: modality-attention # modality-attention or concat
+    fuse_mode: concat # modality-attention or concat
     position_encoding: learnable
     
     
     vision_encoder_cfg:
       model_name: 'resnet34.a1_in1k'
       #model_name: 'vit_base_patch32_clip_224.openai'
-      pretrained: True
+      pretrained: False
       frozen: False
       global_pool: ''
       feature_aggregation: 'attention_pool_2d'
