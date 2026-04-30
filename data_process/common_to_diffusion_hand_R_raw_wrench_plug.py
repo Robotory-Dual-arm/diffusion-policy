@@ -172,7 +172,8 @@ def main():
                     # input_image_F = input_obs['image_F'][::2]
                     # input_image_L = input_obs['image_L'][::2]
                     input_image_R = np.asarray(input_obs['image_R'])[::2]
-                    # input_image_T = input_obs['image_T'][::2]
+                    # input_image_T = np.asarray(input_obs['image_T'])[::2]
+                    
 
                     # wrench: 250Hz
                     input_timestamp_wrench = np.asarray(input_obs['timestamp_wrench'])[:] # [0.0, 0.004, 0.008, 0.012, ...]
@@ -243,6 +244,7 @@ def main():
                     input_timestamp_robot = input_timestamp_robot[valid_robot_mask]
                     input_joint_R = input_joint_R[valid_robot_mask]
                     input_hand_pose_R = input_hand_pose_R[valid_robot_mask]
+                    # input_image_T = input_image_T[valid_robot_mask]
                     input_image_R = input_image_R[valid_robot_mask]
 
                     if len(input_timestamp_robot) == 0:
@@ -297,8 +299,8 @@ def main():
                     # output_obs.create_dataset('image0', data=output_image_H[:-1])
                     # output_obs.create_dataset('image1', data=output_image_F[:-1])
                     # output_obs.create_dataset('imageX', data=output_image_L[:-1])
-                    output_obs.create_dataset('image0', data=output_image_R[:-1])
                     # output_obs.create_dataset('image0', data=output_image_T[:-1])
+                    output_obs.create_dataset('image0', data=output_image_R[:-1])
 
                     output_obs.create_dataset('wrench_wrist_R', data=output_wrench_wrist_R_aligned[:-1])
                     output_obs.create_dataset('wrench_thumb_R', data=output_wrench_thumb_R_aligned[:-1])
@@ -313,7 +315,7 @@ def main():
                     # output_6d_rotation_L = quat_to_6d(output_TCP_quat_L)
                     output_6d_rotation_R = quat_to_6d(output_TCP_quat_R)
 
-                    output_actions = np.hstack([output_TCP_pose_R, output_6d_rotation_R, output_hand_pose_R]).tolist()
+                    output_actions = np.hstack([output_TCP_pose_R, output_6d_rotation_R]).tolist()
 
                     output_demo_n.create_dataset('actions', data=output_actions[1:])
 
