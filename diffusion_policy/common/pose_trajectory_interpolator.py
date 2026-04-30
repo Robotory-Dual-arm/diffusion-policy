@@ -29,6 +29,7 @@ class PoseTrajectoryInterpolator:
 
         self.dualarm_hand7 = False
         self.rightarm_hand = False
+        self.rightarm = False
 
         if action_type == 'dualarm_hand7': # total dim = 26
             self.dualarm_hand7 = True # dualarm[posL(3), rotL(3), posR(3), rotR(3)] + hand[thumb(3), index(2), middle(2)]*2
@@ -36,6 +37,8 @@ class PoseTrajectoryInterpolator:
             self.rightarm_hand = True # rightarm[posR(3), rotR(3)] + hand[rest]
         # action_type == None -> total dim = 12 (dualarm without hand)
         #                dualarm[posL(3), rotL(3), posR(3), rotR(3)]
+        elif action_type == 'rightarm': # total dim = 6
+            self.rightarm = True # rightarm[posR(3), rotR(3)]
 
         self.action_dim = len(poses[0]) 
 
@@ -67,7 +70,6 @@ class PoseTrajectoryInterpolator:
                 self.hand_interp_L = si.interp1d(times, hand_L, axis=0, assume_sorted=True)
                 self.hand_interp_R = si.interp1d(times, hand_R, axis=0, assume_sorted=True)
 
-            
             elif self.rightarm_hand:
                 assert len(poses[0]) == 12 or len(poses[0]) == 13 or len(poses[0]) == 17
                 pos_R = poses[:,:3]
@@ -77,6 +79,14 @@ class PoseTrajectoryInterpolator:
                 self.pos_interp_R = si.interp1d(times, pos_R, axis=0, assume_sorted=True)
                 self.rot_interp_R = st.Slerp(times, rot_R)
                 self.hand_interp_R = si.interp1d(times, hand_R, axis=0, assume_sorted=True)
+
+            elif self.rightarm:
+                assert len(poses[0]) == 6
+                pos_R = poses[:,:3]
+                rot_R = st.Rotation.from_rotvec(poses[:,3:6])
+
+                self.pos_interp_R = si.interp1d(times, pos_R, axis=0, assume_sorted=True)
+                self.rot_interp_R = st.Slerp(times, rot_R)
 
             else:
                 assert len(poses[0]) == 12
@@ -120,6 +130,10 @@ class PoseTrajectoryInterpolator:
                 poses[:,3:6] = self.rot_interp_R(self.times).as_rotvec()
                 poses[:,6:] = self.hand_interp_R.y
 
+            elif self.rightarm:
+                poses[:,:3] = self.pos_interp_R.y
+                poses[:,3:6] = self.rot_interp_R(self.times).as_rotvec()
+
             else:
                 poses[:,:3] = self.pos_interp_L.y
                 poses[:,3:6] = self.rot_interp_L(self.times).as_rotvec()
@@ -143,33 +157,6 @@ class PoseTrajectoryInterpolator:
         all_poses = self(all_times)
         return PoseTrajectoryInterpolator(times=all_times, poses=all_poses, action_type=action_type)
     
-    # def drive_to_waypoint(self,   # 안씀
-    #         pose, time, curr_time,
-    #         max_pos_speed=np.inf, 
-    #         max_rot_speed=np.inf
-    #     ) -> "PoseTrajectoryInterpolator":
-    #     assert(max_pos_speed > 0)
-    #     assert(max_rot_speed > 0)
-    #     time = max(time, curr_time)
-        
-    #     curr_pose = self(curr_time)
-    #     pos_dist, rot_dist = pose_distance(curr_pose, pose)
-    #     pos_min_duration = pos_dist / max_pos_speed
-    #     rot_min_duration = rot_dist / max_rot_speed
-    #     duration = time - curr_time
-    #     duration = max(duration, max(pos_min_duration, rot_min_duration))
-    #     assert duration >= 0
-    #     last_waypoint_time = curr_time + duration
-
-    #     # insert new pose
-    #     trimmed_interp = self.trim(curr_time, curr_time)
-    #     times = np.append(trimmed_interp.times, [last_waypoint_time], axis=0)
-    #     poses = np.append(trimmed_interp.poses, [pose], axis=0)
-
-    #     # create new interpolator
-    #     final_interp = PoseTrajectoryInterpolator(times, poses)
-    #     return final_interp
-
     def schedule_waypoint(self,
             pose, time,   # target pose, target time
             max_pos_speed=np.inf, 
@@ -260,12 +247,7 @@ class PoseTrajectoryInterpolator:
             is_single = True
             t = np.array([t])
         
-        # if self.dualarm_hand7:
-        #     pose = np.zeros((len(t), 26))
-        # elif self.rightarm_hand:
-        #     pose = np.zeros((len(t), 12))
-        # else:
-        #     pose = np.zeros((len(t), 12))
+       
         pose = np.zeros((len(t), self.action_dim))
 
         if self.single_step:
@@ -288,6 +270,10 @@ class PoseTrajectoryInterpolator:
                 pose[:,3:6] = self.rot_interp_R(t).as_rotvec()
                 pose[:,6:] = self.hand_interp_R(t)
             
+            elif self.rightarm:
+                pose[:,:3] = self.pos_interp_R(t)
+                pose[:,3:6] = self.rot_interp_R(t).as_rotvec()
+
             else:
                 pose[:,:3] = self.pos_interp_L(t)
                 pose[:,3:6] = self.rot_interp_L(t).as_rotvec()
