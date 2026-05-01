@@ -50,6 +50,21 @@ class AttentionPool2d(nn.Module):
         return x.squeeze(0)
     
 
+class RescaleAndNormalize(nn.Module):
+    """Convert images from [-1, 1] to [0, 1], then apply model-specific normalization."""
+    def __init__(self, mean, std):
+        super().__init__()
+        self.register_buffer('mean', torch.tensor(mean).view(1, -1, 1, 1))
+        self.register_buffer('std', torch.tensor(std).view(1, -1, 1, 1))
+
+    def forward(self, x):
+        # [-1, 1] -> [0, 1]
+        x = (x + 1.0) / 2.0
+        # apply model-specific normalization
+        x = (x - self.mean) / self.std
+        return x
+
+
 class TransformerObsEncoder(ModuleAttrMixin):
     def __init__(self,
             shape_meta: dict,
@@ -64,7 +79,9 @@ class TransformerObsEncoder(ModuleAttrMixin):
             # use single rgb model for all rgb inputs
             share_rgb_model: bool=False,
             feature_aggregation: str=None,
-            downsample_ratio: int=32
+            downsample_ratio: int=32,
+            # apply pretrained model's normalization (undo [-1,1] and apply model mean/std)
+            pretrained_model_norm: bool=False
         ):
         """
         Assumes rgb input: B,T,C,H,W
@@ -167,7 +184,31 @@ class TransformerObsEncoder(ModuleAttrMixin):
                 torchvision.transforms.RandomCrop(size=int(image_shape[0] * ratio)),
                 torchvision.transforms.Resize(size=image_shape[0], antialias=True)
             ] + transforms[1:]
-        transform = nn.Identity() if transforms is None else torch.nn.Sequential(*transforms)
+
+        # separate augmentation transforms (train-only) from eval transforms
+        if transforms is not None:
+            crop_size = int(image_shape[0] * ratio)
+            aug_transform = torch.nn.Sequential(*transforms)
+            eval_transform = torch.nn.Sequential(
+                torchvision.transforms.CenterCrop(size=crop_size),
+                torchvision.transforms.Resize(size=image_shape[0], antialias=True)
+            )
+        else:
+            aug_transform = nn.Identity()
+            eval_transform = nn.Identity()
+
+        # build pretrained model normalization layer
+        # converts [-1, 1] input to model-specific normalization
+        self.pretrained_model_norm = pretrained_model_norm
+        norm_transform = nn.Identity()
+        if pretrained_model_norm:
+            data_cfg = timm.data.resolve_model_data_config(model)
+            mean = data_cfg['mean']
+            std = data_cfg['std']
+            norm_transform = RescaleAndNormalize(mean=mean, std=std)
+            logger.info(f"Using pretrained model normalization: mean={mean}, std={std}")
+
+        transform = aug_transform  # stored in key_transform_map for training
 
         for key, attr in obs_shape_meta.items():
             shape = tuple(attr['shape'])
@@ -212,8 +253,10 @@ class TransformerObsEncoder(ModuleAttrMixin):
         self.n_emb = n_emb
         self.shape_meta = shape_meta
         self.key_model_map = key_model_map
-        self.key_transform_map = key_transform_map
+        self.key_transform_map = key_transform_map  # augmentation transforms (train-only)
         self.key_projection_map = key_projection_map
+        self.eval_transform = eval_transform  # CenterCrop + Resize (eval-only)
+        self.norm_transform = norm_transform  # normalization (always applied)
         self.share_rgb_model = share_rgb_model
         self.rgb_keys = rgb_keys
         self.low_dim_keys = low_dim_keys
@@ -267,7 +310,14 @@ class TransformerObsEncoder(ModuleAttrMixin):
             assert B == batch_size
             assert img.shape[2:] == self.key_shape_map[key]
             img = img.reshape(B*T, *img.shape[2:])
-            img = self.key_transform_map[key](img)
+            if self.training:
+                # RandomCrop + Resize + ColorJitter
+                img = self.key_transform_map[key](img)
+            else:
+                # CenterCrop + Resize
+                img = self.eval_transform(img)
+            # normalization always applied
+            img = self.norm_transform(img)
             raw_feature = self.key_model_map[key](img)
             feature = self.aggregate_feature(raw_feature)
             emb = self.key_projection_map[key](feature)
