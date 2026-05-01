@@ -1,31 +1,28 @@
 defaults:
   - _self_
-  - task: real_pusht_image
+  - task: umi_bimanual
 
-name: train_diffusion_transformer_hybrid
-_target_: diffusion_policy.workspace.train_diffusion_transformer_hybrid_workspace.TrainDiffusionTransformerHybridWorkspace
+name: train_diffusion_transformer_timm
+_target_: diffusion_policy.workspace.train_diffusion_transformer_timm_workspace.TrainDiffusionTransformerTimmWorkspace
+
+horizon: 16
+n_obs_steps: 2
+dataset_obs_steps: ${n_obs_steps}
 
 task_name: ${task.name}
 shape_meta: ${task.shape_meta}
 exp_name: "default"
 
-horizon: 16
-n_obs_steps: 2
 n_action_steps: 6
-n_latency_steps: 0
-dataset_obs_steps: ${n_obs_steps}
-past_action_visible: False
-keypoint_visible_rate: 1.0
-obs_as_cond: True
+n_emb: 768
 
 policy:
-  _target_: diffusion_policy.policy.diffusion_transformer_hybrid_image_DiT_policy.DiffusionTransformerHybridImagePolicy
+  _target_: diffusion_policy.policy.diffusion_transformer_timm_policy.DiffusionTransformerTimmPolicy
 
   shape_meta: ${shape_meta}
   
   noise_scheduler:
-    # _target_: diffusers.schedulers.scheduling_ddim.DDIMScheduler
-    _target_: scheduling_ddim.DDIMScheduler
+    _target_: diffusers.DDIMScheduler
     num_train_timesteps: 100
     beta_start: 0.0001
     beta_end: 0.02
@@ -35,30 +32,56 @@ policy:
     clip_sample: True
     set_alpha_to_one: True
     steps_offset: 0
-    prediction_type: epsilon # or sample or v_prediction
+    prediction_type: epsilon # or sample
 
-  horizon: ${horizon}
-  n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
-  n_obs_steps: ${n_obs_steps}
-  num_inference_steps: 8
+  obs_encoder:
+    _target_: diffusion_policy.model.vision.transformer_obs_encoder.TransformerObsEncoder
+    shape_meta: ${shape_meta}
+    global_pool: ''
+    n_emb: ${n_emb}
 
-  #crop_shape: [216, 288] # ch, cw 320x240 90%
-  crop_shape: [210, 210]
-  obs_encoder_group_norm: True
-  eval_fixed_crop: True
+    ##### from scratch #####
+    # model_name: 'vit_base_patch16_224'
+    # model_name: 'resnet34'
+    # model_name: 'vit_tiny_patch16_224'
+    # model_name: 'efficientnet_b0'
+    # model_name: 'efficientnet_b3'
+    # pretrained: False
+    # frozen: False
 
+    ##### from scratch #####
+    model_name: 'resnet34.a1_in1k'
+    # model_name: 'vit_base_patch16_clip_224.openai'
+    # model_name: 'convnext_base.clip_laion2b_augreg_ft_in12k'
+    pretrained: True
+    frozen: False
+
+    # 'cls' or 'avg' or 'max' or 'soft_attention' or 'spatial_embedding' or 'transformer' or 'attention_pool_2d'
+    feature_aggregation: null
+
+    # it only works for resnet. 32 (7x7) or 16 (14x14)
+    downsample_ratio: 32
+
+    transforms:
+      - type: RandomCrop
+        ratio: 0.95
+      
+      - _target_: torchvision.transforms.ColorJitter
+        brightness: 0.3
+        contrast: 0.4
+        saturation: 0.5
+        hue: 0.08
+      
+    use_group_norm: True
+    share_rgb_model: True
+
+  num_inference_steps: 16
+  input_pertub: 0.1 # reference: https://github.com/forever208/DDPM-IP
   n_layer: 7
-  n_cond_layers: 0  # >0: use transformer encoder for cond, otherwise use MLP
-  n_head: 4
-  n_emb: 256
-  p_drop_emb: 0.0
+  n_head: 8
+  n_emb: ${n_emb}
   p_drop_attn: 0.1
-  causal_attn: False
-  time_as_cond: True # if false, use BERT like encoder only arch, time as input
-  obs_as_cond: ${obs_as_cond}
-
-  # scheduler.step params
-  # predict_epsilon: True
+  
 
 ema:
   _target_: diffusion_policy.model.diffusion.ema_model.EMAModel
@@ -70,38 +93,39 @@ ema:
 
 dataloader:
   batch_size: 24
-  num_workers: 8
+  num_workers: 16
   shuffle: True
   pin_memory: True
   persistent_workers: True
 
 val_dataloader:
   batch_size: 24
-  num_workers: 8
+  num_workers: 16
   shuffle: False
   pin_memory: True
   persistent_workers: True
 
 optimizer:
-  transformer_weight_decay: 1.0e-6
+  lr: 1.0e-4
+  weight_decay: 1.0e-6
+  obs_encoder_lr: 1.0e-5
   obs_encoder_weight_decay: 1.0e-6
-  learning_rate: 3.0e-4
-  betas: [0.9, 0.999]
-
+  betas: [0.95, 0.999]
+  
 training:
   device: "cuda:0"
   seed: 42
   debug: False
-  resume: True
+  resume: False
   # optimization
   lr_scheduler: cosine
-  # Transformer needs LR warmup
   lr_warmup_steps: 500
-  num_epochs: 2000
+  num_epochs: 1000
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
   use_ema: True
+  freeze_encoder: False
   # training loop control
   # in epochs
   rollout_every: 100
@@ -116,7 +140,7 @@ training:
 
 logging:
   project: diffusion_policy_debug
-  resume: True
+  resume: False
   mode: online
   name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
   tags: ["${name}", "${task_name}", "${exp_name}"]

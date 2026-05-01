@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, reduce
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+import torchvision.transforms as T
 
 from diffusion_policy.model.common.normalizer import LinearNormalizer
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
@@ -325,6 +326,14 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
     def compute_loss(self, batch):
         # normalize input
         assert 'valid_mask' not in batch
+
+        # 이미지 augmentation!!!!!!!!!!!!!!!
+        transform = T.Compose([T.ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5, hue=0.08),
+                               T.RandomGrayscale(p=0.005)])
+        num_image = len([key for key in batch['obs'].keys() if 'image' in key])
+        for i in range(num_image):
+            batch['obs'][f'image{i}'] = transform(batch['obs'][f'image{i}'])
+
         nobs = self.normalizer.normalize(batch['obs'])
         nactions = self.normalizer['action'].normalize(batch['action'])
         batch_size = nactions.shape[0]

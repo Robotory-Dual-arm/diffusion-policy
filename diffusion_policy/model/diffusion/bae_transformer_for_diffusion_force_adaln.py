@@ -500,8 +500,18 @@ class TransformerForDiffusion(ModuleAttrMixin):
         for layer in self.decoder.layers:
             if isinstance(layer, AdaLNDecoderLayer):
                 mod_linear = layer.adaLN_modulation[-1]
-                zero_linear_chunk(mod_linear, chunk_index=2, num_chunks=6)
-                zero_linear_chunk(mod_linear, chunk_index=5, num_chunks=6)
+                torch.nn.init.zeros_(mod_linear.weight)
+                if mod_linear.bias is not None:
+                    torch.nn.init.zeros_(mod_linear.bias)
+
+        if isinstance(self.final_layer, FinalAdaLNLayer):
+            final_mod_linear = self.final_layer.adaLN_modulation[-1]
+            torch.nn.init.zeros_(final_mod_linear.weight)
+            if final_mod_linear.bias is not None:
+                torch.nn.init.zeros_(final_mod_linear.bias)
+            torch.nn.init.zeros_(self.final_layer.linear.weight)
+            if self.final_layer.linear.bias is not None:
+                torch.nn.init.zeros_(self.final_layer.linear.bias)
 
     def _get_cond_pos_emb(
         self,
