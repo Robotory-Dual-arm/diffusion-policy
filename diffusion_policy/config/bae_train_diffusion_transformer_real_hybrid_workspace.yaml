@@ -53,13 +53,14 @@ policy:
   n_emb: 256
   p_drop_emb: 0.0
   p_drop_attn: 0.1
-  causal_attn: True
+  causal_attn: False
   time_as_cond: True # if false, use BERT like encoder only arch, time as input
   obs_as_cond: ${obs_as_cond}
 
   # scheduler.step params
   # predict_epsilon: True
-
+  pose_repr: ${task.pose_repr}
+  
 ema:
   _target_: diffusion_policy.model.diffusion.ema_model.EMAModel
   update_after_step: 0

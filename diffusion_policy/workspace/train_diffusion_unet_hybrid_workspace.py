@@ -233,12 +233,16 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                             for batch_idx, batch in enumerate(tepoch):
                                 batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
                                 loss = self.model.compute_loss(batch)
+                                
                                 val_losses.append(loss.item())
+
                                 if (cfg.training.max_val_steps is not None) \
                                     and batch_idx >= (cfg.training.max_val_steps-1):
                                     break
                         if len(val_losses) > 0:
+
                             val_loss = float(np.mean(val_losses))
+
                             # log epoch average validation loss
                             step_log['val_loss'] = val_loss
 
