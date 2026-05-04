@@ -7,7 +7,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 
 from spatialmath import SE3
 import spatialmath.base as smb
-from std_msgs.msg import Int32, Float64, String, Float64MultiArray
+from std_msgs.msg import Int32, Float64, Float64MultiArray
 from geometry_msgs.msg import PoseStamped, WrenchStamped
 from sensor_msgs.msg import JointState, MultiDOFJointState
 
@@ -30,6 +30,10 @@ from diffusion_policy.shared_memory.shared_memory_queue import (
 from diffusion_policy.shared_memory.shared_memory_ring_buffer import SharedMemoryRingBuffer
 from diffusion_policy.common.pose_trajectory_interpolator import PoseTrajectoryInterpolator
 
+
+# True: impedance controller (/right_dsr_controller/task_space_command)
+# False: position controller (/right_dsr_joint_controller/joint_state_command)
+USE_IMPEDANCE_CONTROLLER = False
 
 
 def rot6d_to_rotvec(rot6d: np.ndarray) -> np.ndarray:
@@ -96,6 +100,9 @@ class Dualarm(Node):
 
         self.joint_name = [f"left_joint_{i}" for i in range(1,7)] + \
                             [f"right_joint_{i}" for i in range(1,7)]
+        self.right_joint_name = [f"right_joint_{i}" for i in range(1,7)]
+        self.dsr_joint_name = [f"joint_{i}" for i in range(1,7)]
+        self.joint_name_debug_printed = False
         
         # self.hand_name = [f"left_thumb_joint{i}" for i in range(1,4)] + \
         #                  [f"left_index_joint{i}" for i in range(1,4)] + \
@@ -118,6 +125,7 @@ class Dualarm(Node):
             10,
             callback_group=self.callback_group
         )
+
         # 오른손 wrench wrist
         self.wrench_wrist_R_subscriber = self.create_subscription(
             WrenchStamped,
@@ -173,6 +181,11 @@ class Dualarm(Node):
             '/right_dsr_joint_controller/joint_state_command',
             10
         )
+        self.task_space_command_publisher_R = self.create_publisher(
+            PoseStamped,
+            '/right_dsr_controller/task_space_command',
+            10
+        )
         # self.hand_command_publisher = self.create_publisher(
         #     JointState,
         #     '/aidin_dualarm_joint_controller/joint_state_command',
@@ -185,15 +198,36 @@ class Dualarm(Node):
             '/TCP_target_pose_R',
             10
         )
+        control_name = 'impedance' if USE_IMPEDANCE_CONTROLLER else 'position'
+        print(f"[Control] right arm control mode: {control_name}")
 
     def joint_callback(self, msg):
         global latest_joint_R, latest_hand_R
     
         joint_mapping = {n: p for n, p in zip(msg.name, msg.position)}
-        joint_position = [joint_mapping.get(j) for j in self.joint_name]
+        joint_position = [joint_mapping.get(j) for j in self.right_joint_name]
+        if any(x is None for x in joint_position):
+            joint_position = [joint_mapping.get(j) for j in self.dsr_joint_name]
+
+        if any(x is None for x in joint_position):
+            if len(msg.position) == 6:
+                joint_position = list(msg.position)
+            else:
+                if not self.joint_name_debug_printed:
+                    print(f"[WARN] Cannot map right arm joints from /joint_states names: {list(msg.name)}")
+                    self.joint_name_debug_printed = True
+                return
+
+        joint_position = np.asarray(joint_position, dtype=np.float64)
+        if joint_position.shape != (6,) or not np.all(np.isfinite(joint_position)):
+            if not self.joint_name_debug_printed:
+                print(f"[WARN] Invalid right arm joint positions: {joint_position}")
+                self.joint_name_debug_printed = True
+            return
+
+        latest_joint_R = joint_position
         # hand_position = [joint_mapping.get(j) for j in self.hand_name]
         # latest_joint_L = joint_position[:6]
-        latest_joint_R = joint_position[6:]
         # latest_hand_L = hand_position[0:3] + hand_position[4:6] + hand_position[7:9]
         # latest_hand_R = np.array([hand_position[i] for i in self.use_right_hand_index])
     
@@ -292,10 +326,26 @@ class Dualarm(Node):
     #     self.joint_command_publisher_L.publish(msg)
     def joint_command_publish_R(self, joint_position):
         msg = JointState()
-        msg.name = self.joint_name[6:]
+        msg.name = self.right_joint_name
         joint_position = [float(x) for x in joint_position]
         msg.position = joint_position
         self.joint_command_publisher_R.publish(msg)
+
+    def task_space_command_publish_R(self, tcp_pose):
+        msg = PoseStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "base_link"
+        tcp_pose = np.asarray(tcp_pose, dtype=np.float64)
+        quat = R.from_rotvec(tcp_pose[3:6]).as_quat()
+
+        msg.pose.position.x = float(tcp_pose[0] * 1000.0)
+        msg.pose.position.y = float(tcp_pose[1] * 1000.0)
+        msg.pose.position.z = float(tcp_pose[2] * 1000.0)
+        msg.pose.orientation.x = float(quat[0])
+        msg.pose.orientation.y = float(quat[1])
+        msg.pose.orientation.z = float(quat[2])
+        msg.pose.orientation.w = float(quat[3])
+        self.task_space_command_publisher_R.publish(msg)
 
     # def hand_command_publish(self, hand_position):
     #     msg = JointState()
@@ -615,9 +665,7 @@ class DualarmInterpolationController(mp.Process):
 
         try:
             print("[DEBUG] Waiting for initial data...")
-            while (latest_joint_R is None or # latest_hand_R is None or 
-                   latest_wrench_wrist_R is None or latest_wrench_index_R is None or 
-                   latest_wrench_middle_R is None or latest_wrench_ring_R is None):
+            while latest_joint_R is None:
                 executor.spin_once(timeout_sec=0.01)
             print("[DEBUG] All initial data received!")
          
@@ -685,15 +733,14 @@ class DualarmInterpolationController(mp.Process):
                 target_rotvec_R = pose_command[3:6]
                 target_hand_R = pose_command[6:]
                 
-                # 전처리
-                # target_L = np.concatenate([target_pose_L, target_rotvec_L])
                 target_R = np.concatenate([target_pose_R, target_rotvec_R])
-                # target_joint_L = servoJ(doosan_robot, latest_joint_L, target_L)
-                target_joint_R = servoJ(doosan_robot, latest_joint_R, target_R)
 
                 # 토픽발사
-                # node.joint_command_publish_L(target_joint_L)
-                node.joint_command_publish_R(target_joint_R)
+                if USE_IMPEDANCE_CONTROLLER:
+                    node.task_space_command_publish_R(target_R)
+                else:
+                    target_joint_R = servoJ(doosan_robot, latest_joint_R, target_R)
+                    node.joint_command_publish_R(target_joint_R)
                 # node.hand_command_publish(np.concatenate([target_hand_R]))   
 
                 # trajectory 확인용

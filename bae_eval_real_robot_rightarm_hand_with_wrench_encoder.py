@@ -51,112 +51,6 @@ from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
-#####
-def summarize_cross_attention(attn_info, tag: str = ""):
-    if not attn_info:
-        print(f"{tag}[ATTN] no attention data")
-        return
-
-    for layer_item in attn_info:
-        w = layer_item.get('cross_attn', None)
-        if w is None:
-            print(f"{tag}[ATTN] layer={layer_item.get('layer')} cross_attn=None")
-            continue
-        print(
-            f"{tag}[ATTN] layer={layer_item.get('layer')} "
-            f"shape={tuple(w.shape)} "
-            f"mean={w.mean().item():.6f} max={w.max().item():.6f} min={w.min().item():.6f}"
-        )
-
-
-def summarize_condition_token_influence(
-    attn_info,
-    cond_token_names,
-    tag: str = "",
-    reduce_layers: str = "mean",
-):
-    """Summarize influence of each condition token on actions.
-
-    Expects cross-attention weights shaped like (B, T_action, S_cond).
-    Prints per-token total (sum across action steps) and per-action-step argmax token.
-
-    Note: attention weight is a *soft routing* signal. It's not a gradient-based attribution.
-    """
-    if not attn_info:
-        print(f"{tag}[COND] no attention data")
-        return
-
-    # collect weights for layers that have them
-    layer_ws = []
-    for layer_item in attn_info:
-        w = layer_item.get('cross_attn', None)
-        if w is None:
-            continue
-        layer_ws.append(w)
-
-    if len(layer_ws) == 0:
-        print(f"{tag}[COND] no cross-attn weights present")
-        return
-
-    # (L, B, T, S)
-    w_stack = torch.stack(layer_ws, dim=0)
-
-    if reduce_layers == "mean":
-        w = w_stack.mean(dim=0)
-    elif reduce_layers == "last":
-        w = w_stack[-1]
-    else:
-        raise ValueError(f"Unknown reduce_layers={reduce_layers}")
-
-    # pick batch 0 for printing
-    w0 = w[0]
-    T_action, S_cond = w0.shape
-    if cond_token_names is None:
-        cond_token_names = [f"cond{j}" for j in range(S_cond)]
-    if len(cond_token_names) != S_cond:
-        # don't crash; just fallback
-        cond_token_names = [f"cond{j}" for j in range(S_cond)]
-
-    # per-token influence aggregated over action steps
-    token_total = w0.sum(dim=0)  # (S,)
-    token_mean = w0.mean(dim=0)  # (S,)
-
-    # normalize token_total to 1.0 for easy comparison
-    token_total_norm = token_total / (token_total.sum() + 1e-12)
-
-    print(f"{tag}[COND] cross-attn reduced_layers={reduce_layers} shape(B,T,S)={tuple(w.shape)}")
-    # print tokens sorted by influence
-    order = torch.argsort(token_total_norm, descending=True)
-    print(f"{tag}[COND] token influence (sum over {T_action} action steps; normalized):")
-    for j in order.tolist():
-        print(
-            f"  - {cond_token_names[j]:>12s}: total={token_total[j].item():.4f} "
-            f"mean={token_mean[j].item():.4f} norm={token_total_norm[j].item():.4f}"
-        )
-
-    # per-action-step top token
-    top_idx = torch.argmax(w0, dim=1)  # (T,)
-    print(f"{tag}[COND] top condition token per action step:")
-    for ti in range(T_action):
-        j = int(top_idx[ti].item())
-        print(
-            f"  - action[{ti:02d}] -> {cond_token_names[j]} (w={w0[ti, j].item():.4f})"
-        )
-
-
-def save_attention_trace(trace, save_root: pathlib.Path, prefix: str):
-    if not trace:
-        return
-
-    save_root.mkdir(parents=True, exist_ok=True)
-    for step in trace:
-        denoise_step = int(step.get('denoise_step', -1))
-        diffusion_timestep = int(step.get('diffusion_timestep', -1))
-        out_path = save_root / (
-            f"{prefix}_denoise{denoise_step:03d}_t{diffusion_timestep:04d}.pt"
-        )
-        torch.save(step, out_path)
-#####
 
 @click.command()
 @click.option('--input', '-i', required=True, help='Path to checkpoint')   # checkpoint
@@ -181,20 +75,8 @@ def main(input, output, robot_ip, match_dataset, match_episode,
     cfg = payload['cfg']   # yaml에 있던 변수들 설정값
     
     # Head = 242422304502, Front = 336222070518, Left = 218622276386, Right = 126122270712
-    serial_numbers = ['126122270712', '151222078010'] # right, table
-    # attention weight 확인
-    show_attention = True
-    # condition token names (must match TransformerForDiffusion cond token order)
-    # (time, imageR_t0, imageR_t1, imageT_t0, imageT_t1, lowdim_t0, lowdim_t1, force_t1)
-    cond_token_names = [
-        'time',
-        'imgR_0', 'imgR_1',
-        'imgT_0', 'imgT_1',
-        'lowdim_0', 'lowdim_1',
-        'force_1'
-    ]
-    attention_output_dir = pathlib.Path(output) / 'attention'
-    attention_dump_idx = 0
+    serial_numbers = ['126122270712'] # right, table
+   
     # RTC
     use_pigdm = False
     if use_pigdm == True:
@@ -221,19 +103,6 @@ def main(input, output, robot_ip, match_dataset, match_episode,
         device = torch.device('cuda')
         policy.eval().to(device)
 
-#####
-        if show_attention:
-            if hasattr(policy, 'set_attention_trace_capture'):
-                policy.set_attention_trace_capture(True)
-            elif hasattr(policy, 'model') and hasattr(policy.model, 'set_attention_capture'):
-                policy.model.set_attention_capture(True)
-            print('[ATTN] cross-attention capture enabled')
-#####
-        
-        #추가됨
-        # policy.obs_encoder.to(device)
-        # print("policy device setting")
-        
         # set inference params
         policy.num_inference_steps = 16 # DDIM inference iterations; 노이즈 제거 step 수
         policy.n_action_steps = policy.horizon - policy.n_obs_steps + 1   # 과거부터 horizon 뽑고, obs만큼 빼고, 1 더하기 (16 - 2 + 1 = 15)
@@ -322,21 +191,6 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                 else:
                     result = policy.predict_action(obs_dict)
 
-#####
-                if show_attention and hasattr(policy, 'model') and hasattr(policy.model, 'get_attention_weights'):
-                    attn = policy.model.get_attention_weights()
-                    summarize_cross_attention(attn, tag='[warmup] ')
-                    summarize_condition_token_influence(
-                        attn_info=attn,
-                        cond_token_names=cond_token_names,
-                        tag='[warmup] ',
-                        reduce_layers='mean'
-                    )
-                if show_attention and hasattr(policy, 'get_last_attention_trace'):
-                    warmup_trace = policy.get_last_attention_trace()
-                    save_attention_trace(warmup_trace, attention_output_dir, prefix='warmup')
-#####
-
                 # 실제 실행할 action trajectory
                 action = result['action'][0].detach().to('cpu').numpy()   # [0]은 배치차원 제거, tensor --> np
                 assert action.shape[-1] == cfg.task.shape_meta.action.shape[0]   # action 차원에 맞게 바꿔주기
@@ -395,25 +249,6 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                             else:
                                 result = policy.predict_action(obs_dict)
 
-#####
-                            if show_attention and hasattr(policy, 'model') and hasattr(policy.model, 'get_attention_weights'):
-                                attn = policy.model.get_attention_weights()
-                                summarize_cross_attention(attn, tag='[eval] ')
-                                summarize_condition_token_influence(
-                                    attn_info=attn,
-                                    cond_token_names=cond_token_names,
-                                    tag='[eval] ',
-                                    reduce_layers='mean'
-                                )
-                            if show_attention and hasattr(policy, 'get_last_attention_trace'):
-                                trace = policy.get_last_attention_trace()
-                                save_attention_trace(
-                                    trace,
-                                    attention_output_dir,
-                                    prefix=f'iter{attention_dump_idx:06d}'
-                                )
-                                attention_dump_idx += 1
-#####
 
                             # this action starts from the first obs step
                             action = result['action'][0].detach().to('cpu').numpy()   # 실행할 action[Horizon, Action_Dim]
