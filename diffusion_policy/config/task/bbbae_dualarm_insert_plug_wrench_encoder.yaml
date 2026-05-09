@@ -1,7 +1,7 @@
-name: bbbae_dualarm_insert_plug_no_wrench
+name: bbbae_dualarm_insert_plug_wrench_encoder
 
 image_shape: [3, 224, 224]
-dataset_path: /data/baetae/260430/diffusion_data_plug_raw_wrench_R_image.hdf5
+dataset_path: /data/baetae/260508/diffusion_data_plug_wrench_encoder_R_image.hdf5
 
 # relative
 low_dim_obs_horizon: 2
@@ -47,35 +47,29 @@ shape_meta: &shape_meta
     #  type: low_dim
     #  horizon: ${task.low_dim_obs_horizon}
       
-    #wrench_wrist_R:
-    #  shape: [6]
-    #  type: low_dim
-    #  horizon: ${task.low_dim_obs_horizon}
+    wrench_wrist_R:
+      shape: [6, 32]
+      type: wrench
       
     #wrench_thumb_R:
-    #  shape: [1]
-    #  type: low_dim
-    #  horizon: ${task.low_dim_obs_horizon}
+    #  shape: [1, 32]
+    #  type: wrench
       
     #wrench_index_R:
-    #  shape: [1]
-    #  type: low_dim
-    #  horizon: ${task.low_dim_obs_horizon}
+    #  shape: [1, 32]
+    #  type: wrench
       
     #wrench_middle_R:
-    #  shape: [1]
-    #  type: low_dim
-    #  horizon: ${task.low_dim_obs_horizon}
+    #  shape: [1, 32]
+    #  type: wrench
       
     #wrench_ring_R:
-    #  shape: [1]
-    #  type: low_dim
-    #  horizon: ${task.low_dim_obs_horizon}
+    #  shape: [1, 32]
+    #  type: wrench
       
     #wrench_baby_R:
-    #  shape: [1]
-    #  type: low_dim  
-    #  horizon: ${task.low_dim_obs_horizon}
+    #  shape: [1, 32]
+    #  type: wrench
     
   action: 
     shape: [9] # robot_pose_R[3] + robot_rot6d_R[6] 
@@ -84,7 +78,7 @@ shape_meta: &shape_meta
 
 pose_repr: &pose_repr
   obs_pose_repr: abs # abs or relative
-  action_pose_repr: abs # abs or relative 
+  action_pose_repr: relative # abs or relative 
   
 env_runner:
   _target_: diffusion_policy.env_runner.real_pusht_image_runner.RealPushTImageRunner

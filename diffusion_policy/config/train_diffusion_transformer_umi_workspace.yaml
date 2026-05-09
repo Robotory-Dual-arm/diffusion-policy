@@ -53,7 +53,7 @@ policy:
     # model_name: 'resnet34.a1_in1k'
     model_name: 'vit_base_patch16_clip_224.openai'
     # model_name: 'convnext_base.clip_laion2b_augreg_ft_in12k'
-    pretrained: True
+    pretrained: False
     frozen: False
     pretrained_model_norm: True
 
@@ -109,7 +109,7 @@ val_dataloader:
 optimizer:
   lr: 1.0e-4
   weight_decay: 1.0e-6
-  obs_encoder_lr: 1.0e-5
+  obs_encoder_lr: 1.0e-4
   obs_encoder_weight_decay: 1.0e-6
   betas: [0.95, 0.999]
   
@@ -158,14 +158,14 @@ checkpoint:
   save_last_snapshot: False
 
 multi_run:
-  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+  run_dir: /data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
   wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
 
 hydra:
   job:
     override_dirname: ${name}
   run:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+    dir: /data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
   sweep:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+    dir: /data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
     subdir: ${hydra.job.num}
