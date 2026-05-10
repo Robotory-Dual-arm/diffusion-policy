@@ -36,6 +36,24 @@ from diffusion_policy.common.pose_trajectory_interpolator import PoseTrajectoryI
 USE_IMPEDANCE_CONTROLLER = False
 
 
+FINGER_WRENCH_KEYS = {
+    'wrench_thumb_R': 0,
+    'wrench_index_R': 1,
+    'wrench_middle_R': 2,
+    'wrench_ring_R': 3,
+    'wrench_baby_R': 4,
+}
+
+
+def get_requested_wrench_keys(shape_meta):
+    if shape_meta is None:
+        return []
+    return [
+        key for key in shape_meta.get('obs', {}).keys()
+        if key.startswith('wrench_')
+    ]
+
+
 def rot6d_to_rotvec(rot6d: np.ndarray) -> np.ndarray:
    
     a1 = rot6d[:3]
@@ -94,9 +112,17 @@ def servoJ(robot, current_joint, target_pose, acc_pos_limit=40.0, acc_rot_limit=
 
 
 class Dualarm(Node):
-    def __init__(self):
+    def __init__(self, shape_meta=None):
         super().__init__('dualarm_node')
         self.callback_group = ReentrantCallbackGroup()
+        self.shape_meta = shape_meta
+        self.required_wrench_keys = get_requested_wrench_keys(shape_meta)
+        self.requires_wrist_wrench = 'wrench_wrist_R' in self.required_wrench_keys
+        self.required_finger_indices = [
+            FINGER_WRENCH_KEYS[key]
+            for key in self.required_wrench_keys
+            if key in FINGER_WRENCH_KEYS
+        ]
 
         self.joint_name = [f"left_joint_{i}" for i in range(1,7)] + \
                             [f"right_joint_{i}" for i in range(1,7)]
@@ -152,7 +178,7 @@ class Dualarm(Node):
         self.WRENCH_CALIB_COUNT = 10  # 초기 몇 번의 값을 모을지
         self.wrench_calib_samples_wrist_R = []
         self.wrench_calib_samples_fingers_R = [[] for _ in range(5)]  # thumb, index, middle, ring, baby
-        self.wrench_calibrated = False
+        self.wrench_calibrated = len(self.required_wrench_keys) == 0
         self.wrench_offset_wrist_R = None
         self.wrench_offset_fingers_R = [None] * 5
 
@@ -250,6 +276,16 @@ class Dualarm(Node):
     #         for i in range(5)
     #     ]
 
+    def _has_required_wrench_samples(self):
+        if len(self.required_wrench_keys) == 0:
+            return False
+        if self.requires_wrist_wrench and self.raw_wrench_wrist_R is None:
+            return False
+        for finger_idx in self.required_finger_indices:
+            if self.raw_wrench_fingers_R[finger_idx] is None:
+                return False
+        return True
+
     def wrench_ema_update(self):
 
         global latest_wrench_wrist_R, latest_wrench_fingers_R
@@ -258,49 +294,70 @@ class Dualarm(Node):
 
         # ===== Calibration Phase: 초기 N번 값을 모아서 offset 계산 =====
         if not self.wrench_calibrated:
-            if self.raw_wrench_wrist_R is not None and self.raw_wrench_fingers_R[0] is not None:
-                self.wrench_calib_samples_wrist_R.append(self.raw_wrench_wrist_R.copy())
-                for i in range(5):
+            if self._has_required_wrench_samples():
+                if self.requires_wrist_wrench:
+                    self.wrench_calib_samples_wrist_R.append(self.raw_wrench_wrist_R.copy())
+                for i in self.required_finger_indices:
                     self.wrench_calib_samples_fingers_R[i].append(self.raw_wrench_fingers_R[i].copy())
 
-                if len(self.wrench_calib_samples_wrist_R) >= self.WRENCH_CALIB_COUNT:
+                n_calib_samples = 0
+                if self.requires_wrist_wrench:
+                    n_calib_samples = len(self.wrench_calib_samples_wrist_R)
+                elif self.required_finger_indices:
+                    first_finger_idx = self.required_finger_indices[0]
+                    n_calib_samples = len(self.wrench_calib_samples_fingers_R[first_finger_idx])
 
-                    self.wrench_offset_wrist_R = np.mean(self.wrench_calib_samples_wrist_R, axis=0)
-                    for i in range(5):
+                if n_calib_samples >= self.WRENCH_CALIB_COUNT:
+
+                    if self.requires_wrist_wrench:
+                        self.wrench_offset_wrist_R = np.mean(self.wrench_calib_samples_wrist_R, axis=0)
+                    for i in self.required_finger_indices:
                         self.wrench_offset_fingers_R[i] = np.mean(self.wrench_calib_samples_fingers_R[i], axis=0)
                     self.wrench_calibrated = True
                     print(f"[Wrench] Calibration done! ({self.WRENCH_CALIB_COUNT} samples)")
-                    print(f"[Wrench] Offset wrist: {self.wrench_offset_wrist_R}")
-                    print(f"[Wrench] Offset fingers: {[o.tolist() for o in self.wrench_offset_fingers_R]}")
+                    if self.requires_wrist_wrench:
+                        print(f"[Wrench] Offset wrist: {self.wrench_offset_wrist_R}")
+                    if self.required_finger_indices:
+                        print(f"[Wrench] Offset fingers: {[o.tolist() if o is not None else None for o in self.wrench_offset_fingers_R]}")
             return  
 
         # ===== EMA Phase: offset 적용 후 EMA 갱신 =====
         # wrist
-        if self.raw_wrench_wrist_R is not None:
+        if self.requires_wrist_wrench and self.raw_wrench_wrist_R is not None:
             corrected_wrist_R = self.raw_wrench_wrist_R - self.wrench_offset_wrist_R
             if latest_wrench_wrist_R is None:
                 latest_wrench_wrist_R = corrected_wrist_R.copy()
             else:
                 latest_wrench_wrist_R = a * corrected_wrist_R + (1 - a) * latest_wrench_wrist_R
         # fingers
-        if self.raw_wrench_fingers_R[0] is not None:
-            corrected_fingers_R = [
-                self.raw_wrench_fingers_R[i] - self.wrench_offset_fingers_R[i]
-                for i in range(5)
-            ]
-            if latest_wrench_index_R is None:
-                latest_wrench_fingers_R = [corrected_fingers_R[i].copy() for i in range(5)]
+        if self.required_finger_indices:
+            corrected_fingers_R = [None] * 5
+            for i in self.required_finger_indices:
+                corrected_fingers_R[i] = self.raw_wrench_fingers_R[i] - self.wrench_offset_fingers_R[i]
+            if latest_wrench_fingers_R is None:
+                latest_wrench_fingers_R = [
+                    corrected_fingers_R[i].copy() if corrected_fingers_R[i] is not None else None
+                    for i in range(5)
+                ]
               
             else:
-                latest_wrench_fingers_R = [a * corrected_fingers_R[i]
-                                           + (1-a) * latest_wrench_fingers_R[i] for i in range(5)]
+                latest_wrench_fingers_R = [
+                    a * corrected_fingers_R[i] + (1-a) * latest_wrench_fingers_R[i]
+                    if corrected_fingers_R[i] is not None else latest_wrench_fingers_R[i]
+                    for i in range(5)
+                ]
             
             # for usage
-            latest_wrench_thumb_R = latest_wrench_fingers_R[0][2:3] # fz
-            latest_wrench_index_R = latest_wrench_fingers_R[1][2:3] # fz
-            latest_wrench_middle_R = latest_wrench_fingers_R[2][2:3] # fz
-            latest_wrench_ring_R = latest_wrench_fingers_R[3][2:3] # fz
-            latest_wrench_baby_R = latest_wrench_fingers_R[4][2:3] # fz
+            if 0 in self.required_finger_indices:
+                latest_wrench_thumb_R = latest_wrench_fingers_R[0][2:3] # fz
+            if 1 in self.required_finger_indices:
+                latest_wrench_index_R = latest_wrench_fingers_R[1][2:3] # fz
+            if 2 in self.required_finger_indices:
+                latest_wrench_middle_R = latest_wrench_fingers_R[2][2:3] # fz
+            if 3 in self.required_finger_indices:
+                latest_wrench_ring_R = latest_wrench_fingers_R[3][2:3] # fz
+            if 4 in self.required_finger_indices:
+                latest_wrench_baby_R = latest_wrench_fingers_R[4][2:3] # fz
 
         # ===== Append to 32-frame history (thread-safe) =====
         if self.wrench_calibrated:
@@ -367,13 +424,16 @@ class Dualarm(Node):
 
     def get_wrench_hist_32(self, shape_meta=None):
         """
-        Get recent 32-frame wrench history (250Hz basis).
-        Returns dict of wrench data ready for policy input.
+        Get recent 32-frame wrench history for encoder-style wrench obs.
+        Only obs entries with type='wrench' should use this output.
         """
         result = {}
         
-        # shape_meta가 주어지면 그 안에서 'wrench'로 시작하는 키만 필터링합니다.
-        target_keys = [k for k in shape_meta['obs'].keys() if 'wrench' in k]
+        obs_meta = shape_meta.get('obs', {}) if shape_meta is not None else {}
+        target_keys = [
+            key for key, attr in obs_meta.items()
+            if key.startswith('wrench_') and attr.get('type', 'low_dim') == 'wrench'
+        ]
         
         with self.wrench_lock:
             # Wrist
@@ -401,6 +461,54 @@ class Dualarm(Node):
                         arr_f = np.concatenate([pad, arr_f], axis=0)
                     result[key_name] = arr_f[-32:].T  # (ch, 32)
         
+        return result
+
+    def get_wrench_low_dim(self, shape_meta=None):
+        """
+        Get latest 6-axis/1-axis wrench values for low_dim-style wrench obs.
+        Only obs entries with type='low_dim' should use this output.
+        """
+        obs_meta = shape_meta.get('obs', {}) if shape_meta is not None else {}
+        target_keys = [
+            key for key, attr in obs_meta.items()
+            if key.startswith('wrench_') and attr.get('type', 'low_dim') == 'low_dim'
+        ]
+
+        result = {}
+        if 'wrench_wrist_R' in target_keys:
+            if latest_wrench_wrist_R is None:
+                ch = obs_meta['wrench_wrist_R']['shape'][0]
+                result['wrench_wrist_R'] = np.zeros((ch,), dtype=np.float32)
+            else:
+                result['wrench_wrist_R'] = latest_wrench_wrist_R.astype(np.float32)
+
+        finger_values = {
+            'wrench_thumb_R': latest_wrench_thumb_R,
+            'wrench_index_R': latest_wrench_index_R,
+            'wrench_middle_R': latest_wrench_middle_R,
+            'wrench_ring_R': latest_wrench_ring_R,
+            'wrench_baby_R': latest_wrench_baby_R,
+        }
+        for key, value in finger_values.items():
+            if key not in target_keys:
+                continue
+            if value is None:
+                ch = obs_meta[key]['shape'][0]
+                result[key] = np.zeros((ch,), dtype=np.float32)
+            else:
+                result[key] = value.astype(np.float32)
+
+        return result
+
+    def get_wrench_state(self, shape_meta=None):
+        """
+        Return wrench obs in the exact format requested by shape_meta.
+        - type='low_dim' -> latest wrench vector, e.g. (6,)
+        - type='wrench'  -> recent wrench history, e.g. (6, 32)
+        """
+        result = {}
+        result.update(self.get_wrench_low_dim(shape_meta=shape_meta))
+        result.update(self.get_wrench_hist_32(shape_meta=shape_meta))
         return result
 
 class Command(enum.Enum):
@@ -657,7 +765,7 @@ class DualarmInterpolationController(mp.Process):
         latest_wrench_thumb_R, latest_wrench_index_R, latest_wrench_middle_R, latest_wrench_ring_R, latest_wrench_baby_R = None, None, None, None, None
 
         rclpy.init(args=None)
-        node = Dualarm()
+        node = Dualarm(shape_meta=self.shape_meta)
         self.dualarm_node = node  # Store reference for accessing wrench history
 
         executor = MultiThreadedExecutor(num_threads=4)
@@ -772,7 +880,7 @@ class DualarmInterpolationController(mp.Process):
                 curr_tcp_rotvec_R = R.from_quat(curr_tcp_quat_R).as_rotvec()
                 # curr_pose = np.concatenate([curr_tcp_pose_L, curr_tcp_rotvec_L, curr_tcp_pose_R, curr_tcp_rotvec_R])
 
-                wrench_hist_dict = node.get_wrench_hist_32(shape_meta=self.shape_meta)
+                wrench_state = node.get_wrench_state(shape_meta=self.shape_meta)
                 
                 # 현재 State 저장
                 # update robot state; ringbuffer에 state 저장
@@ -791,8 +899,8 @@ class DualarmInterpolationController(mp.Process):
                     #     state[key] = np.array(curr_hand_L)
                     # elif key == 'hand_pose_R':
                     #     state[key] = np.array(curr_hand_R)
-                    elif key in wrench_hist_dict:
-                        state[key] = np.array(wrench_hist_dict[key], dtype=np.float64)
+                    elif key in wrench_state:
+                        state[key] = np.array(wrench_state[key], dtype=np.float64)
                     
                 state['robot_receive_timestamp'] = time.time()
                 self.ring_buffer.put(state)   
