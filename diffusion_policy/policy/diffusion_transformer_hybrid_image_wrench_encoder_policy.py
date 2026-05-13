@@ -198,17 +198,22 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
 
 
         ### Force Encoder
-        if fc.model_name == 'causalconv':
-            force_encoder = CausalConvForceEncoder(
-                input_dim=self.num_wrench_component,
-                feature_dim=fc.feature_dim
-            )
-        elif fc.model_name == 'gru':
-            force_encoder = GRUForceEncoder(
-                input_dim=self.num_wrench_component,
-                feature_dim=fc.feature_dim
-            )
-        force_feature_dim = fc.feature_dim
+        force_encoder = None
+        force_feature_dim = 0
+        if len(wrench_keys) > 0:
+            if fc.model_name == 'causalconv':
+                force_encoder = CausalConvForceEncoder(
+                    input_dim=self.num_wrench_component,
+                    feature_dim=fc.feature_dim
+                )
+            elif fc.model_name == 'gru':
+                force_encoder = GRUForceEncoder(
+                    input_dim=self.num_wrench_component,
+                    feature_dim=fc.feature_dim
+                )
+            else:
+                raise ValueError(f"Unsupported force encoder {fc.model_name}")
+            force_feature_dim = fc.feature_dim
 
         ### Low-dim encoder
         self.low_dim_encoder = nn.Linear(self.num_low_dim_component, vision_feature_dim)
@@ -223,7 +228,8 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
                 batch_first=True,
                 dropout=0.0,
             )
-            n_features = (len(rgb_keys) + 1) * n_obs_steps + 1 # vision + low_dim + force features
+            n_force_tokens = 1 if len(wrench_keys) > 0 else 0
+            n_features = (len(rgb_keys) + 1) * n_obs_steps + n_force_tokens # vision + low_dim (+ force)
             self.linear_projection = nn.Linear(vision_feature_dim*n_features, vision_feature_dim)
             
             if obs_encoder.position_encoding == 'learnable':
@@ -311,7 +317,10 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
 
         print("Diffusion params: %e" % sum(p.numel() for p in self.model.parameters()))
         print("Vision Encoder params: %e" % sum(p.numel() for p in self.vision_encoder.parameters()))
-        print("Force Encoder params: %e" % sum(p.numel() for p in self.force_encoder.parameters()))
+        if self.force_encoder is not None:
+            print("Force Encoder params: %e" % sum(p.numel() for p in self.force_encoder.parameters()))
+        else:
+            print("Force Encoder disabled: no wrench obs keys")
 
     
     # ========= inference  ============
@@ -462,14 +471,15 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         #  (B, To, low_dim_feature_dim)]   이미지 2개 + low-dim
 
         # Force encoding
-        force_features = []
-        combined_wrench_data = []
-        for key in self.wrench_keys:
-            combined_wrench_data.append(wrench_nobs[key]) # (B, To=1, wrench_axis, wrench_hist)
-        wrench_total = torch.cat(combined_wrench_data, dim=-2) # (B, To=1, num_wrench_component, wrench_hist)
-        force_feature = self.force_encoder(wrench_total.reshape(-1, *wrench_total.shape[-2:])) # (B, 1, feature_dim)
-        force_features.append(force_feature.reshape(B, -1)) # (B, feature_dim)
-        modality_features.append(force_feature) # (B, 1, feature_dim)
+        if self.force_encoder is not None:
+            force_features = []
+            combined_wrench_data = []
+            for key in self.wrench_keys:
+                combined_wrench_data.append(wrench_nobs[key]) # (B, To=1, wrench_axis, wrench_hist)
+            wrench_total = torch.cat(combined_wrench_data, dim=-2) # (B, To=1, num_wrench_component, wrench_hist)
+            force_feature = self.force_encoder(wrench_total.reshape(-1, *wrench_total.shape[-2:])) # (B, 1, feature_dim)
+            force_features.append(force_feature.reshape(B, -1)) # (B, feature_dim)
+            modality_features.append(force_feature) # (B, 1, feature_dim)
         # [(B, To, vision_feature_dim), (B, To, vision_feature_dim), 
         #  (B, To, low_dim_feature_dim), 
         #  (B, 1, force_feature_dim)]    이미지 2개 + low-dim + force (force는 To=1)
@@ -489,7 +499,8 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             attended_modalities = list(torch.split(out_embeds, token_sizes, dim=1))
             attended_vision = attended_modalities[:len(self.rgb_keys)]
             attended_low_dim = attended_modalities[len(self.rgb_keys)]
-            attended_force = attended_modalities[len(self.rgb_keys) + 1]
+            if self.force_encoder is not None:
+                attended_force = attended_modalities[len(self.rgb_keys) + 1]
             token_num = sum(token_sizes)
 
             nobs_features = out_embeds
@@ -565,7 +576,9 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             weight_decay=weight_decay)
         
         # obs encoder from scratch
-        modules = [self.force_encoder, self.low_dim_encoder]
+        modules = [self.low_dim_encoder]
+        if self.force_encoder is not None:
+            modules.append(self.force_encoder)
         if hasattr(self, 'attention_pool_2d'):
             modules.append(self.attention_pool_2d)
         if hasattr(self, 'transformer_encoder'):
@@ -656,14 +669,15 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         #  (B, To, low_dim_feature_dim)]   이미지 2개 + low-dim
         
         # Force encoding
-        force_features = []
-        combined_wrench_data = []
-        for key in self.wrench_keys:
-            combined_wrench_data.append(wrench_nobs[key]) # (B, To=1, wrench_axis, wrench_hist)
-        wrench_total = torch.cat(combined_wrench_data, dim=-2) # (B, To=1, num_wrench_component, wrench_hist)
-        force_feature = self.force_encoder(wrench_total.reshape(-1, *wrench_total.shape[-2:])) # (B, 1, feature_dim)
-        force_features.append(force_feature.reshape(B, -1)) # (B, feature_dim)
-        modality_features.append(force_feature) # (B, 1, feature_dim)
+        if self.force_encoder is not None:
+            force_features = []
+            combined_wrench_data = []
+            for key in self.wrench_keys:
+                combined_wrench_data.append(wrench_nobs[key]) # (B, To=1, wrench_axis, wrench_hist)
+            wrench_total = torch.cat(combined_wrench_data, dim=-2) # (B, To=1, num_wrench_component, wrench_hist)
+            force_feature = self.force_encoder(wrench_total.reshape(-1, *wrench_total.shape[-2:])) # (B, 1, feature_dim)
+            force_features.append(force_feature.reshape(B, -1)) # (B, feature_dim)
+            modality_features.append(force_feature) # (B, 1, feature_dim)
         # [(B, To, vision_feature_dim), (B, To, vision_feature_dim), 
         #  (B, To, low_dim_feature_dim), 
         #  (B, 1, force_feature_dim)]    이미지 2개 + low-dim + force (force는 To=1)
@@ -683,7 +697,8 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             attended_modalities = list(torch.split(out_embeds, token_sizes, dim=1))
             attended_vision = attended_modalities[:len(self.rgb_keys)]
             attended_low_dim = attended_modalities[len(self.rgb_keys)]
-            attended_force = attended_modalities[len(self.rgb_keys) + 1]
+            if self.force_encoder is not None:
+                attended_force = attended_modalities[len(self.rgb_keys) + 1]
             token_num = sum(token_sizes)
 
             nobs_features = out_embeds # (B, token_num, feature_dim)

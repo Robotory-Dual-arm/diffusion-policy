@@ -46,7 +46,7 @@ policy:
   # obs_encoder_group_norm: True
   # eval_fixed_crop: True
 
-  n_layer: 7
+  n_layer: 8
   n_cond_layers: 0  # >0: use transformer encoder for cond, otherwise use MLP
   n_head: 4  # 6이 더 좋다는 말도 있네요 (ScaleDP)
   n_emb: 512 # token 밑에 vision, force feature랑 맞춰야된다
@@ -61,7 +61,7 @@ policy:
   pose_repr: ${task.pose_repr}
   
   obs_encoder:
-    fuse_mode: concat # modality-attention or concat
+    fuse_mode: modality-attention # modality-attention or concat
     position_encoding: learnable
     
     
@@ -83,11 +83,11 @@ policy:
           ratio: 0.95
         
         colorjitter:
-          brightness: 0.3
-          contrast: 0.4
-          saturation: 0.5
-          hue: 0.08
-          grayscale: 0.005
+          brightness: 0.15 # 0.3
+          contrast: 0.2 # 0.4
+          saturation: 0.25 # 0.5
+          hue: 0.04 # 0.08
+          grayscale: 0.002 # 0.005
       
     
     force_encoder_cfg:
@@ -124,10 +124,10 @@ optimizer:
   #betas: [0.9, 0.95]
   
   # transformer & other models
-  lr: 5.0e-4
+  lr: 0.5e-4
   weight_decay: 1.0e-6
   # pretrained image model
-  obs_encoder_lr: 5.0e-4
+  obs_encoder_lr: 0.5e-4
   obs_encoder_weight_decay: 1.0e-6
   
   betas: [0.9, 0.999] 
@@ -177,14 +177,14 @@ checkpoint:
   save_last_snapshot: False
 
 multi_run:
-  run_dir: /data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
   wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
 
 hydra:
   job:
     override_dirname: ${name}
   run:
-    dir: /data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
   sweep:
-    dir: /data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
     subdir: ${hydra.job.num}

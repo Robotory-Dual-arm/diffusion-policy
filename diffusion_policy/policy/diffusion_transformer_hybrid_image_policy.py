@@ -44,6 +44,7 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             time_as_cond=True,
             obs_as_cond=True,
             pred_action_steps_only=False,   # 실행할 action만 예측
+            pose_repr: dict={},
             # parameters passed to step
             **kwargs):
         super().__init__()
@@ -59,9 +60,14 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             'depth': [],
             'scan': []
         }
+        self.obs_pose_repr = pose_repr.get('obs_pose_repr', 'abs')
+        self.action_pose_repr = pose_repr.get('action_pose_repr', 'abs')
+
         obs_key_shapes = dict()
         for key, attr in obs_shape_meta.items():
             shape = attr['shape']
+            if self.obs_pose_repr == 'relative' and 'quat' in key:
+                shape = (6,)
             obs_key_shapes[key] = list(shape)
 
             type = attr.get('type', 'low_dim')

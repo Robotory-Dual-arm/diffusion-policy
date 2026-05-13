@@ -51,16 +51,17 @@ class AttentionPool2d(nn.Module):
     
 
 class RescaleAndNormalize(nn.Module):
-    """Convert images from [-1, 1] to [0, 1], then apply model-specific normalization."""
-    def __init__(self, mean, std):
+    """Apply timm pretrained image normalization after the policy image normalizer."""
+    def __init__(self, mean, std, input_range='minus_one_one'):
         super().__init__()
+        assert input_range in ('minus_one_one', 'zero_one')
+        self.input_range = input_range
         self.register_buffer('mean', torch.tensor(mean).view(1, -1, 1, 1))
         self.register_buffer('std', torch.tensor(std).view(1, -1, 1, 1))
 
     def forward(self, x):
-        # [-1, 1] -> [0, 1]
-        x = (x + 1.0) / 2.0
-        # apply model-specific normalization
+        if self.input_range == 'minus_one_one':
+            x = (x + 1.0) / 2.0
         x = (x - self.mean) / self.std
         return x
 
@@ -80,8 +81,9 @@ class TransformerObsEncoder(ModuleAttrMixin):
             share_rgb_model: bool=False,
             feature_aggregation: str=None,
             downsample_ratio: int=32,
-            # apply pretrained model's normalization (undo [-1,1] and apply model mean/std)
-            pretrained_model_norm: bool=False
+            # apply pretrained model mean/std after optional input range conversion
+            pretrained_model_norm: bool=False,
+            pretrained_model_input_range: str='minus_one_one'
         ):
         """
         Assumes rgb input: B,T,C,H,W
@@ -209,14 +211,19 @@ class TransformerObsEncoder(ModuleAttrMixin):
             eval_transform = nn.Identity()
 
         # build pretrained model normalization layer
-        # converts [-1, 1] input to model-specific normalization
+        # converts encoder input to model-specific normalization
         self.pretrained_model_norm = pretrained_model_norm
+        self.rescale_before_transform = (
+            pretrained_model_norm and pretrained_model_input_range == 'minus_one_one')
         norm_transform = nn.Identity()
         if pretrained_model_norm:
             data_cfg = timm.data.resolve_model_data_config(model)
             mean = data_cfg['mean']
             std = data_cfg['std']
-            norm_transform = RescaleAndNormalize(mean=mean, std=std)
+            norm_transform = RescaleAndNormalize(
+                mean=mean,
+                std=std,
+                input_range='zero_one' if self.rescale_before_transform else pretrained_model_input_range)
             logger.info(f"Using pretrained model normalization: mean={mean}, std={std}")
 
         transform = aug_transform  # stored in key_transform_map for training
@@ -320,6 +327,8 @@ class TransformerObsEncoder(ModuleAttrMixin):
             assert B == batch_size
             assert img.shape[2:] == self.key_shape_map[key]
             img = img.reshape(B*T, *img.shape[2:])
+            if self.rescale_before_transform:
+                img = (img + 1.0) / 2.0
             if self.training:
                 # Spatial transforms are safe in [-1, 1].
                 img = self.key_transform_map[key](img)
