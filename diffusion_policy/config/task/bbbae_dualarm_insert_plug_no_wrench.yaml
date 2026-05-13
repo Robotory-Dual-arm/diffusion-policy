@@ -84,7 +84,7 @@ shape_meta: &shape_meta
 
 pose_repr: &pose_repr
   obs_pose_repr: abs # abs or relative
-  action_pose_repr: abs # abs or relative 
+  action_pose_repr: relative # abs or relative 
   
 env_runner:
   _target_: diffusion_policy.env_runner.real_pusht_image_runner.RealPushTImageRunner

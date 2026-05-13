@@ -14,7 +14,7 @@ shape_meta: ${task.shape_meta}
 exp_name: "default"
 
 n_action_steps: 6
-n_emb: 768
+n_emb: 256
 
 policy:
   _target_: diffusion_policy.policy.diffusion_transformer_timm_policy.DiffusionTransformerTimmPolicy
@@ -32,7 +32,7 @@ policy:
     clip_sample: True
     set_alpha_to_one: True
     steps_offset: 0
-    prediction_type: epsilon # or sample
+    prediction_type: v_prediction # or sample or v_prediction
 
   obs_encoder:
     _target_: diffusion_policy.model.vision.transformer_obs_encoder.TransformerObsEncoder
@@ -50,15 +50,15 @@ policy:
     # frozen: False
 
     ##### from scratch #####
-    # model_name: 'resnet34.a1_in1k'
-    model_name: 'vit_base_patch16_clip_224.openai'
+    model_name: 'resnet34.a1_in1k'
+    # model_name: 'vit_base_patch16_clip_224.openai'
     # model_name: 'convnext_base.clip_laion2b_augreg_ft_in12k'
     pretrained: False
     frozen: False
     pretrained_model_norm: True
 
     # 'cls' or 'avg' or 'max' or 'soft_attention' or 'spatial_embedding' or 'transformer' or 'attention_pool_2d'
-    feature_aggregation: null
+    feature_aggregation: attention_pool_2d
 
     # it only works for resnet. 32 (7x7) or 16 (14x14)
     downsample_ratio: 32
@@ -68,10 +68,10 @@ policy:
         ratio: 0.95
       
       - _target_: torchvision.transforms.ColorJitter
-        brightness: 0.3
-        contrast: 0.4
-        saturation: 0.5
-        hue: 0.08
+        brightness: 0.1 # 0.3
+        contrast: 0.15 # 0.4
+        saturation: 0.2 # 0.5
+        hue: 0.03 # 0.08
       
     use_group_norm: True
     share_rgb_model: True
@@ -107,9 +107,9 @@ val_dataloader:
   persistent_workers: True
 
 optimizer:
-  lr: 1.0e-4
+  lr: 0.5e-4
   weight_decay: 1.0e-6
-  obs_encoder_lr: 1.0e-4
+  obs_encoder_lr: 0.5e-4
   obs_encoder_weight_decay: 1.0e-6
   betas: [0.95, 0.999]
   

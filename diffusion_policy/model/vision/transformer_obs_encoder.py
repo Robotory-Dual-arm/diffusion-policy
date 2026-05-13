@@ -143,6 +143,19 @@ class TransformerObsEncoder(ModuleAttrMixin):
                     num_channels=x.num_features)
             )
             
+        image_shape = None
+        obs_shape_meta = shape_meta['obs']
+        for key, attr in obs_shape_meta.items():
+            shape = tuple(attr['shape'])
+            type = attr.get('type', 'low_dim')
+            if type == 'rgb':
+                assert image_shape is None or image_shape == shape[1:]
+                image_shape = shape[1:]
+
+        feature_map_shape = None
+        if image_shape is not None and feature_dim is not None:
+            feature_map_shape = [x // downsample_ratio for x in image_shape]
+
         # handle feature aggregation
         self.feature_aggregation = feature_aggregation
         if model_name.startswith('vit'):
@@ -160,39 +173,37 @@ class TransformerObsEncoder(ModuleAttrMixin):
                 nn.Softmax(dim=1)
             )
         elif self.feature_aggregation == 'spatial_embedding':
+            assert feature_map_shape is not None
             self.spatial_embedding = torch.nn.Parameter(torch.randn(feature_map_shape[0] * feature_map_shape[1], feature_dim))
         elif self.feature_aggregation == 'attention_pool_2d':
+            assert feature_map_shape is not None
+            assert feature_map_shape[0] == feature_map_shape[1]
             self.attention_pool_2d = AttentionPool2d(
                 spacial_dim=feature_map_shape[0],
                 embed_dim=feature_dim,
                 num_heads=feature_dim // 64,
                 output_dim=feature_dim
             )
-        
-        image_shape = None
-        obs_shape_meta = shape_meta['obs']
-        for key, attr in obs_shape_meta.items():
-            shape = tuple(attr['shape'])
-            type = attr.get('type', 'low_dim')
-            if type == 'rgb':
-                assert image_shape is None or image_shape == shape[1:]
-                image_shape = shape[1:]
-        if transforms is not None and not isinstance(transforms[0], torch.nn.Module):
-            assert transforms[0].type == 'RandomCrop'
-            ratio = transforms[0].ratio
-            transforms = [
-                torchvision.transforms.RandomCrop(size=int(image_shape[0] * ratio)),
-                torchvision.transforms.Resize(size=image_shape[0], antialias=True)
-            ] + transforms[1:]
 
-        # separate augmentation transforms (train-only) from eval transforms
+        color_transform = nn.Identity()
         if transforms is not None:
-            crop_size = int(image_shape[0] * ratio)
-            aug_transform = torch.nn.Sequential(*transforms)
-            eval_transform = torch.nn.Sequential(
-                torchvision.transforms.CenterCrop(size=crop_size),
-                torchvision.transforms.Resize(size=image_shape[0], antialias=True)
-            )
+            if not isinstance(transforms[0], torch.nn.Module):
+                assert transforms[0].type == 'RandomCrop'
+                ratio = transforms[0].ratio
+                crop_size = int(image_shape[0] * ratio)
+                aug_transform = torch.nn.Sequential(
+                    torchvision.transforms.RandomCrop(size=crop_size),
+                    torchvision.transforms.Resize(size=image_shape[0], antialias=True)
+                )
+                eval_transform = torch.nn.Sequential(
+                    torchvision.transforms.CenterCrop(size=crop_size),
+                    torchvision.transforms.Resize(size=image_shape[0], antialias=True)
+                )
+                if len(transforms) > 1:
+                    color_transform = torch.nn.Sequential(*transforms[1:])
+            else:
+                aug_transform = torch.nn.Sequential(*transforms)
+                eval_transform = nn.Identity()
         else:
             aug_transform = nn.Identity()
             eval_transform = nn.Identity()
@@ -245,8 +256,6 @@ class TransformerObsEncoder(ModuleAttrMixin):
             else:
                 raise RuntimeError(f"Unsupported obs type: {type}")
         
-        feature_map_shape = [x // downsample_ratio for x in image_shape]
-            
         rgb_keys = sorted(rgb_keys)
         low_dim_keys = sorted(low_dim_keys)
 
@@ -256,6 +265,7 @@ class TransformerObsEncoder(ModuleAttrMixin):
         self.key_transform_map = key_transform_map  # augmentation transforms (train-only)
         self.key_projection_map = key_projection_map
         self.eval_transform = eval_transform  # CenterCrop + Resize (eval-only)
+        self.color_transform = color_transform  # ColorJitter etc. (train-only)
         self.norm_transform = norm_transform  # normalization (always applied)
         self.share_rgb_model = share_rgb_model
         self.rgb_keys = rgb_keys
@@ -281,7 +291,7 @@ class TransformerObsEncoder(ModuleAttrMixin):
         # resnet
         assert len(feature.shape) == 4
         if self.feature_aggregation == 'attention_pool_2d':
-            return self.attention_pool_2d(feature)
+            return self.attention_pool_2d(feature).unsqueeze(1)
 
         feature = torch.flatten(feature, start_dim=-2) # B, 512, 7*7
         feature = torch.transpose(feature, 1, 2) # B, 7*7, 512
@@ -311,8 +321,13 @@ class TransformerObsEncoder(ModuleAttrMixin):
             assert img.shape[2:] == self.key_shape_map[key]
             img = img.reshape(B*T, *img.shape[2:])
             if self.training:
-                # RandomCrop + Resize + ColorJitter
+                # Spatial transforms are safe in [-1, 1].
                 img = self.key_transform_map[key](img)
+                # ColorJitter expects [0, 1], while the dataset normalizer
+                # sends images here as [-1, 1].
+                img = (img + 1.0) / 2.0
+                img = self.color_transform(img)
+                img = img * 2.0 - 1.0
             else:
                 # CenterCrop + Resize
                 img = self.eval_transform(img)
