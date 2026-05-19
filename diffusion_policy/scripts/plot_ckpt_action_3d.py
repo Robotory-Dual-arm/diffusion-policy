@@ -49,12 +49,12 @@ def choose_indices(
     return np.sort(rng.choice(dataset_len, size=count, replace=False)).astype(np.int64)
 
 
-def load_policy(checkpoint: pathlib.Path, output_dir: pathlib.Path, device: torch.device):
+def load_policy(checkpoint: pathlib.Path, output_dir: pathlib.Path, device: torch.device, strict: bool = True):
     payload = torch.load(checkpoint.open("rb"), pickle_module=dill, map_location="cpu")
     cfg = payload["cfg"]
     cls = hydra.utils.get_class(cfg._target_)
     workspace: BaseWorkspace = cls(cfg, output_dir=str(output_dir))
-    workspace.load_payload(payload, exclude_keys=("optimizer",))
+    workspace.load_payload(payload, exclude_keys=("optimizer",), strict=strict)
 
     policy = workspace.model
     if cfg.training.use_ema:
@@ -319,7 +319,7 @@ def make_plot(
         specs=[[{"type": "scene"} for _ in range(cols)] for _ in range(rows)],
         subplot_titles=subplot_titles,
         horizontal_spacing=0.02,
-        vertical_spacing=0.04,
+        vertical_spacing=min(0.04, 0.8 / max(rows - 1, 1)),
     )
 
     for r, idx in enumerate(indices, start=1):
@@ -444,12 +444,13 @@ def main():
     parser.add_argument("--step-mode", choices=["exec", "all"], default="exec")
     parser.add_argument("--save-sample-images", action="store_true")
     parser.add_argument("--skip-html", action="store_true")
+    parser.add_argument("--non-strict-load", action="store_true")
     args = parser.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device(args.device)
 
-    cfg, policy = load_policy(args.checkpoint, args.output_dir, device)
+    cfg, policy = load_policy(args.checkpoint, args.output_dir, device, strict=not args.non_strict_load)
     if args.num_inference_steps is not None:
         policy.num_inference_steps = args.num_inference_steps
 

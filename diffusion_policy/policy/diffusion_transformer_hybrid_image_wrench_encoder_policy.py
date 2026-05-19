@@ -304,10 +304,6 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         self.position_encoding = obs_encoder.position_encoding
         self.feature_aggregation = vc.feature_aggregation
 
-#####
-        self.capture_attention_trace = False
-        self.last_attention_trace = []
-#####
 
         if num_inference_steps is None:
             num_inference_steps = noise_scheduler.config.num_train_timesteps
@@ -324,21 +320,6 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
 
     
     # ========= inference  ============
-
-#####    
-    def set_attention_trace_capture(self, enabled: bool = True):
-        """
-        diffusion sampling 동안 timestep별 cross-attention trace 저장 on/off.
-        """
-        self.capture_attention_trace = enabled
-        if hasattr(self.model, 'set_attention_capture'):
-            self.model.set_attention_capture(enabled)
-        if not enabled:
-            self.last_attention_trace = []
-
-    def get_last_attention_trace(self):
-        return self.last_attention_trace
-#####
 
     def conditional_sample(self, 
             condition_data, condition_mask,
@@ -359,8 +340,6 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         # set step values; scheduler.timestep 생성
         scheduler.set_timesteps(self.num_inference_steps)
 
-#####
-        self.last_attention_trace = []
         # for t in scheduler.timesteps:
         for denoise_step, t in enumerate(scheduler.timesteps):
             # 1. apply conditioning
@@ -368,29 +347,6 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
 
             # 2. predict model output
             model_output = model(trajectory, t, cond)   # Transformer
-
-            if self.capture_attention_trace and hasattr(model, 'get_attention_weights'):
-                timestep_attention = []
-                for layer_item in model.get_attention_weights():
-                    w = layer_item.get('cross_attn', None)
-                    if w is None:
-                        timestep_attention.append({
-                            'layer': layer_item.get('layer', -1),
-                            'cross_attn': None,
-                        })
-                    else:
-                        timestep_attention.append({
-                            'layer': layer_item.get('layer', -1),
-                            'cross_attn': w.detach().to('cpu').clone(),
-                        })
-
-                t_int = int(t.item()) if torch.is_tensor(t) else int(t)
-                self.last_attention_trace.append({
-                    'denoise_step': denoise_step,
-                    'diffusion_timestep': t_int,
-                    'layers': timestep_attention,
-                })
-#####
 
             # 3. compute previous image: x_t -> x_t-1
             trajectory = scheduler.step(
@@ -552,6 +508,182 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         result = {
             'action': action,   # 실제 사용할 traj
             'action_pred': action_pred   # 예측한 전체 traj
+        }
+        return result
+
+
+    def predict_action_horizon(
+            self,
+            obs_dict: Dict[str, torch.Tensor],
+            start_action,
+            noise_ratio=0.5) -> Dict[str, torch.Tensor]:
+        """
+        Re-noise start_action, then denoise it from the selected diffusion step.
+        """
+        assert 'past_action' not in obs_dict # not implemented yet
+
+        # image crop, resize, colorjitter
+        for i in range(self.num_image):
+            img = obs_dict[f'image{i}'].reshape(-1, *obs_dict[f'image{i}'].shape[2:])
+            img = self.transform_eval(img)
+            obs_dict[f'image{i}'] = img.reshape(*obs_dict[f'image{i}'].shape[:])
+
+        # normalize input
+        nobs = self.normalizer.normalize(obs_dict)
+        value = next(iter(nobs.values()))
+        B, To = value.shape[:2]
+        Da = self.action_dim
+        Do = self.obs_feature_dim
+        To = self.n_obs_steps
+
+        # build input
+        device = self.device
+        dtype = self.dtype
+        start_action = start_action.to(device=device, dtype=dtype)
+        T = start_action.shape[1]
+
+        # Separate and save wrench data
+        wrench_nobs = {}
+        for key in self.wrench_keys:
+            wrench_nobs[key] = nobs.pop(key)  # Save and remove from nobs
+
+        this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:])) # (B, To, ...) -> (B*To, ...)
+
+        modality_features = list()
+
+        # Image encoding
+        vision_features = []
+        for key in self.rgb_keys:
+            img = this_nobs[key]
+            assert img.shape[1:] == self.key_shape_map[key]
+            raw_vision_feature = self.vision_encoder(img) # (B*To, vision_feature_dim, n, n)
+            # resnet
+            if self.vision_model_name.startswith('resnet'):
+                if self.feature_aggregation == 'attention_pool_2d':
+                    vision_feature = self.attention_pool_2d(raw_vision_feature) # (B*To, vision_feature_dim)
+                # elif self.feature_aggregation == 'adaptive_avg_pool_2d':
+                #     AdaptiveAvgPool2d((k, k))  ->  spatial 정보 조금 남길수있음
+            # ViT
+            else:
+                vision_feature = raw_vision_feature[:, 0, :]   # CLS token
+            vision_features.append(vision_feature.reshape(B, -1)) # (B, To*vision_feature_dim)
+            modality_features.append(vision_feature.reshape(B, To, -1)) # (B, To, vision_feature_dim)
+
+        # low-dim encoding (linear)
+        low_dim_features = []
+        for t in range(To):
+            low_dim_t = torch.cat([nobs[key][:,t,:] for key in self.low_dim_keys], dim=-1)
+            low_dim_feature_t = self.low_dim_encoder(low_dim_t)
+            low_dim_features.append(low_dim_feature_t.reshape(B, -1))
+        low_dim_features = torch.stack(low_dim_features, dim=1)  # (B, To, low_dim_feature_dim)
+        modality_features.append(low_dim_features)
+        # [(B, To, vision_feature_dim), (B, To, vision_feature_dim), 
+        #  (B, To, low_dim_feature_dim)]   이미지 2개 + low-dim
+
+        # Force encoding
+        if self.force_encoder is not None:
+            force_features = []
+            combined_wrench_data = []
+            for key in self.wrench_keys:
+                combined_wrench_data.append(wrench_nobs[key]) # (B, To=1, wrench_axis, wrench_hist)
+            wrench_total = torch.cat(combined_wrench_data, dim=-2) # (B, To=1, num_wrench_component, wrench_hist)
+            force_feature = self.force_encoder(wrench_total.reshape(-1, *wrench_total.shape[-2:])) # (B, 1, feature_dim)
+            force_features.append(force_feature.reshape(B, -1)) # (B, feature_dim)
+            modality_features.append(force_feature) # (B, 1, feature_dim)
+        # [(B, To, vision_feature_dim), (B, To, vision_feature_dim), 
+        #  (B, To, low_dim_feature_dim), 
+        #  (B, 1, force_feature_dim)]    이미지 2개 + low-dim + force (force는 To=1)
+
+
+        # fuse mode
+        if self.fuse_mode == 'modality-attention':
+            in_embeds = torch.cat(modality_features, dim=1) # (B, feature_num, feature_dim)
+            if self.position_encoding == 'learnable':
+                if self.position_embedding.device != in_embeds.device:
+                    self.position_embedding = self.position_embedding.to(in_embeds.device)
+                in_embeds = in_embeds + self.position_embedding
+            out_embeds = self.transformer_encoder(in_embeds) # (B, feature_num, feature_dim)
+
+            # feature 별로 나눠서 보기; 필요없긴 함
+            token_sizes = [x.shape[1] for x in modality_features]
+            attended_modalities = list(torch.split(out_embeds, token_sizes, dim=1))
+            attended_vision = attended_modalities[:len(self.rgb_keys)]
+            attended_low_dim = attended_modalities[len(self.rgb_keys)]
+            if self.force_encoder is not None:
+                attended_force = attended_modalities[len(self.rgb_keys) + 1]
+            token_num = sum(token_sizes)
+
+            nobs_features = out_embeds
+            assert nobs_features.shape[1] == token_num
+
+        # elif self.fuse_mode == 'concat':
+        #     nobs_features = torch.cat(vision_features + low_dim_features + force_features, dim=-1)
+        
+        assert nobs_features.shape[-1] == Do, f"Expected obs feature dim {Do}, got {nobs_features.shape[-1]}"
+
+
+        # handle different ways of passing observation
+        cond = None # obs
+        if self.obs_as_cond:   # cross attention
+            cond = nobs_features
+            shape = (B, T, Da) # action dim
+            cond_data = torch.zeros(size=shape, device=device, dtype=dtype)
+            cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
+
+        # else:   # inpainting, self attention
+        #     nobs_features = nobs_features.reshape(B, -1) # 문제 있다.
+        #     shape = (B, T, Da+Do)
+        #     cond_data = torch.zeros(size=shape, device=device, dtype=dtype)
+        #     cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
+        #     cond_data[:,:To,Da:] = nobs_features
+        #     cond_mask[:,:To,Da:] = True   # obs와 action이후 dimension은 masking
+
+        scheduler = self.noise_scheduler
+        scheduler.set_timesteps(self.num_inference_steps)
+        timesteps = scheduler.timesteps
+
+        start_action_norm = self.normalizer['action'].normalize(start_action)
+        start_index = int(round((1.0 - float(noise_ratio)) * (len(timesteps) - 1)))
+        noise_t = timesteps[start_index].to(device)
+        timestep_batch = noise_t.reshape(1).long().expand(B)
+        noise = torch.randn(start_action_norm.shape, dtype=dtype, device=device)
+        trajectory = scheduler.add_noise(start_action_norm, noise, timestep_batch)
+
+        old_mask = getattr(self.model, 'mask', None)
+        old_memory_mask = getattr(self.model, 'memory_mask', None)
+        if old_mask is not None:
+            self.model.mask = old_mask[:T, :T]
+        if old_memory_mask is not None:
+            self.model.memory_mask = old_memory_mask[:T, :]
+
+        # run sampling; Denoising후 trajectory
+        try:
+            for t in timesteps[start_index:]:
+                trajectory[cond_mask] = cond_data[cond_mask]
+                model_output = self.model(trajectory, t, cond)
+                trajectory = scheduler.step(
+                    model_output, t, trajectory,
+                    **self.kwargs
+                    ).prev_sample
+            trajectory[cond_mask] = cond_data[cond_mask]
+        finally:
+            if old_mask is not None:
+                self.model.mask = old_mask
+            if old_memory_mask is not None:
+                self.model.memory_mask = old_memory_mask
+
+        # unnormalize prediction
+        naction_pred = trajectory[...,:Da]
+        action_pred = self.normalizer['action'].unnormalize(naction_pred)   # 정규화 풀기
+
+        # get action
+        start = To - 1
+        action = action_pred[:,start:]   # 첫 action은 현재 obs window의 앞쪽 context로 사용
+
+        result = {
+            'action': action,   # 실제 사용할 traj
+            'action_pred': action_pred,   # 예측한 전체 traj
+            'noise_timestep': int(noise_t.detach().cpu().item())
         }
         return result
 
@@ -745,7 +877,7 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         # Add noise to the clean images according to the noise magnitude at each timestep
         # (this is the forward diffusion process)
         noisy_trajectory = self.noise_scheduler.add_noise(
-            trajectory, noise, timesteps)
+            trajectory, noise_new, timesteps)
 
         # compute loss mask
         loss_mask = ~condition_mask # 전체 action 모두 loss

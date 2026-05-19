@@ -40,7 +40,7 @@ STATIONARY_INDICES = [135, 140, 146, 151, 156, 318]
 STRAIGHT_INDICES = [1743, 2119, 2124, 2364, 2974, 4519]
 
 
-def load_workspace_from_checkpoint(ckpt_path, device):
+def load_workspace_from_checkpoint(ckpt_path, device, strict=True):
     ckpt_path = resolve_path(ckpt_path)
     payload = torch.load(open(ckpt_path, "rb"), pickle_module=dill, map_location="cpu")
     cfg = copy.deepcopy(payload["cfg"])
@@ -52,6 +52,7 @@ def load_workspace_from_checkpoint(ckpt_path, device):
         payload=payload,
         exclude_keys=("optimizer",),
         include_keys=[],
+        strict=strict,
     )
     del payload
     if hasattr(workspace, "optimizer"):
@@ -154,6 +155,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=6)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="auto")
+    parser.add_argument("--non-strict-load", action="store_true")
     args = parser.parse_args()
 
     ckpt = resolve_path(args.ckpt)
@@ -176,7 +178,7 @@ def main():
     all_indices = sorted(set(STATIONARY_INDICES + STRAIGHT_INDICES))
     samples_by_idx, gt_abs_by_idx, _ = load_samples(dataset, all_indices, action_pose_repr)
 
-    workspace = load_workspace_from_checkpoint(ckpt, device)
+    workspace = load_workspace_from_checkpoint(ckpt, device, strict=not args.non_strict_load)
     policy = workspace.ema_model if workspace.ema_model is not None else workspace.model
     pred_by_idx = predict_abs_actions(
         policy=policy,

@@ -139,12 +139,17 @@ def predict_token_horizon(
             action_dim = policy.action_dim
             dtype = policy.dtype
 
-            if not policy.obs_as_cond:
+            if hasattr(policy, "obs_as_cond") and not policy.obs_as_cond:
                 raise RuntimeError("This variable-horizon visualizer currently expects obs_as_cond=True.")
 
-            this_nobs = dict_apply(nobs, lambda x: x[:, :tobs, ...].reshape(-1, *x.shape[2:]))
-            nobs_features = policy.obs_encoder(this_nobs)
-            cond = nobs_features.reshape(batch_size_actual, tobs, -1)
+            if hasattr(policy, "obs_as_cond"):
+                this_nobs = dict_apply(nobs, lambda x: x[:, :tobs, ...].reshape(-1, *x.shape[2:]))
+                nobs_features = policy.obs_encoder(this_nobs)
+                cond = nobs_features.reshape(batch_size_actual, tobs, -1)
+            else:
+                this_nobs = None
+                nobs_features = None
+                cond = policy.obs_encoder(nobs)
             cond_data = torch.zeros(
                 size=(batch_size_actual, token_horizon, action_dim),
                 device=device,
@@ -219,8 +224,9 @@ def fixed_limits_for_gt(gt_abs, span_m):
 
 def write_sample_png(path, dataset_idx, gt_abs, preds_by_horizon, axis_span_m):
     horizons = list(preds_by_horizon.keys())
-    fig = plt.figure(figsize=(5.0 * len(horizons), 8.0))
-    grid = fig.add_gridspec(2, len(horizons), height_ratios=[3.0, 1.35])
+    plot_cols = max(2, len(horizons))
+    fig = plt.figure(figsize=(5.0 * plot_cols, 8.0))
+    grid = fig.add_gridspec(2, plot_cols, height_ratios=[3.0, 1.35])
 
     for col, horizon in enumerate(horizons):
         pred_abs = preds_by_horizon[horizon]
@@ -237,8 +243,9 @@ def write_sample_png(path, dataset_idx, gt_abs, preds_by_horizon, axis_span_m):
         ax.set_zlabel("z")
         ax.legend(fontsize=7)
 
-    ax_pos = fig.add_subplot(grid[1, :max(1, len(horizons) // 2)])
-    ax_rot = fig.add_subplot(grid[1, max(1, len(horizons) // 2):])
+    split_col = max(1, plot_cols // 2)
+    ax_pos = fig.add_subplot(grid[1, :split_col])
+    ax_rot = fig.add_subplot(grid[1, split_col:])
     for horizon, pred_abs in preds_by_horizon.items():
         gt_slice = gt_abs[:horizon]
         pos_err_mm, rot_err_deg = trajectory_errors(pred_abs, gt_slice)

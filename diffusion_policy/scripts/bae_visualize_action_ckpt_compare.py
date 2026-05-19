@@ -893,6 +893,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--transformer-ckpt", default=DEFAULT_TRANSFORMER_CKPT)
     parser.add_argument("--unet-ckpt", default=DEFAULT_UNET_CKPT)
+    parser.add_argument(
+        "--unet-only",
+        action="store_true",
+        help="Evaluate only the UNet checkpoint and skip all Transformer checkpoints.",
+    )
     parser.add_argument("--output-dir", default="data/debug_action_vis")
     parser.add_argument(
         "--dataset-source",
@@ -980,9 +985,13 @@ def main():
     else:
         device = torch.device(args.device)
 
-    transformer_cfg = load_cfg_for_ckpt(transformer_ckpt)
     unet_cfg = load_cfg_for_ckpt(unet_ckpt)
-    dataset_source_cfg = transformer_cfg if args.dataset_source == "transformer" else unet_cfg
+    transformer_cfg = None if args.unet_only else load_cfg_for_ckpt(transformer_ckpt)
+    dataset_source_cfg = (
+        unet_cfg
+        if args.unet_only or args.dataset_source == "unet"
+        else transformer_cfg
+    )
     dataset_cfg = make_dataset_cfg(dataset_source_cfg)
     dataset = hydra.utils.instantiate(dataset_cfg)
     dataset_len = len(dataset)
@@ -993,7 +1002,7 @@ def main():
     sample_indices = np.linspace(0, dataset_len - 1, args.n_samples, dtype=int).tolist()
     all_indices = sorted(set(sample_indices + [args.sample_idx]))
     dataset_action_pose_repr = resolved_dataset_cfg["pose_repr"]["action_pose_repr"]
-    transformer_action_pose_repr = action_pose_repr_from_cfg(transformer_cfg)
+    transformer_action_pose_repr = None if args.unet_only else action_pose_repr_from_cfg(transformer_cfg)
     unet_action_pose_repr = action_pose_repr_from_cfg(unet_cfg)
     samples_by_idx, gt_abs_by_idx, base_xyz_by_idx = load_samples(
         dataset=dataset,
@@ -1001,38 +1010,69 @@ def main():
         action_pose_repr=dataset_action_pose_repr,
     )
     print(f"GT dataset action_pose_repr: {dataset_action_pose_repr}")
-    print(f"Transformer action_pose_repr: {transformer_action_pose_repr}")
+    if transformer_action_pose_repr is not None:
+        print(f"Transformer action_pose_repr: {transformer_action_pose_repr}")
     print(f"UNet action_pose_repr: {unet_action_pose_repr}")
 
     pred_abs_by_model = OrderedDict()
 
-    print(f"Loading Transformer: {transformer_ckpt}")
-    transformer_workspace = load_policy_from_checkpoint(transformer_ckpt, device)
-    if args.transformer_ema_only_inference_steps is None:
-        if transformer_workspace.ema_model is not None:
-            pred_abs_by_model["Transformer EMA eval"] = predict_with_inference_steps(
-                transformer_workspace.ema_model,
+    if not args.unet_only:
+        print(f"Loading Transformer: {transformer_ckpt}")
+        transformer_workspace = load_policy_from_checkpoint(transformer_ckpt, device)
+        if args.transformer_ema_only_inference_steps is None:
+            if transformer_workspace.ema_model is not None:
+                pred_abs_by_model["Transformer EMA eval"] = predict_with_inference_steps(
+                    transformer_workspace.ema_model,
+                    None,
+                    samples_by_idx,
+                    all_indices,
+                    device,
+                    args.batch_size,
+                    args.seed,
+                    transformer_action_pose_repr,
+                )
+            pred_abs_by_model["Transformer raw model"] = predict_with_inference_steps(
+                transformer_workspace.model,
                 None,
                 samples_by_idx,
                 all_indices,
-                device,
-                args.batch_size,
-                args.seed,
-                transformer_action_pose_repr,
-            )
-        pred_abs_by_model["Transformer raw model"] = predict_with_inference_steps(
-            transformer_workspace.model,
-            None,
-            samples_by_idx,
-            all_indices,
-                device,
-                args.batch_size,
-                args.seed,
-                transformer_action_pose_repr,
-            )
-        for steps in args.transformer_extra_inference_steps:
-            if transformer_workspace.ema_model is not None:
-                pred_abs_by_model[f"Transformer EMA eval steps={steps}"] = predict_with_inference_steps(
+                    device,
+                    args.batch_size,
+                    args.seed,
+                    transformer_action_pose_repr,
+                )
+            for steps in args.transformer_extra_inference_steps:
+                if transformer_workspace.ema_model is not None:
+                    pred_abs_by_model[f"Transformer EMA eval steps={steps}"] = predict_with_inference_steps(
+                        transformer_workspace.ema_model,
+                        steps,
+                        samples_by_idx,
+                        all_indices,
+                        device,
+                        args.batch_size,
+                        args.seed,
+                        transformer_action_pose_repr,
+                    )
+                pred_abs_by_model[f"Transformer raw model steps={steps}"] = predict_with_inference_steps(
+                    transformer_workspace.model,
+                    steps,
+                    samples_by_idx,
+                    all_indices,
+                    device,
+                    args.batch_size,
+                    args.seed,
+                    transformer_action_pose_repr,
+                )
+        else:
+            if transformer_workspace.ema_model is None:
+                raise RuntimeError("--transformer-ema-only-inference-steps requires an EMA model in the checkpoint.")
+            for steps in args.transformer_ema_only_inference_steps:
+                model_name = (
+                    f"{args.transformer_ema_label} steps={steps}"
+                    if args.transformer_ema_label is not None
+                    else f"Transformer EMA eval steps={steps}"
+                )
+                pred_abs_by_model[model_name] = predict_with_inference_steps(
                     transformer_workspace.ema_model,
                     steps,
                     samples_by_idx,
@@ -1042,39 +1082,10 @@ def main():
                     args.seed,
                     transformer_action_pose_repr,
                 )
-            pred_abs_by_model[f"Transformer raw model steps={steps}"] = predict_with_inference_steps(
-                transformer_workspace.model,
-                steps,
-                samples_by_idx,
-                all_indices,
-                device,
-                args.batch_size,
-                args.seed,
-                transformer_action_pose_repr,
-            )
-    else:
-        if transformer_workspace.ema_model is None:
-            raise RuntimeError("--transformer-ema-only-inference-steps requires an EMA model in the checkpoint.")
-        for steps in args.transformer_ema_only_inference_steps:
-            model_name = (
-                f"{args.transformer_ema_label} steps={steps}"
-                if args.transformer_ema_label is not None
-                else f"Transformer EMA eval steps={steps}"
-            )
-            pred_abs_by_model[model_name] = predict_with_inference_steps(
-                transformer_workspace.ema_model,
-                steps,
-                samples_by_idx,
-                all_indices,
-                device,
-                args.batch_size,
-                args.seed,
-                transformer_action_pose_repr,
-            )
-    del transformer_workspace
-    gc.collect()
+        del transformer_workspace
+        gc.collect()
 
-    if args.compare_transformer_ckpt is not None:
+    if args.compare_transformer_ckpt is not None and not args.unet_only:
         compare_transformer_ckpt = resolve_path(args.compare_transformer_ckpt)
         compare_steps = args.compare_transformer_inference_steps
         if compare_steps is None and args.transformer_ema_only_inference_steps:
@@ -1143,10 +1154,13 @@ def main():
         for model_name, pred_by_idx in pred_eval_by_model.items():
             rows.append(metric_row(model_name, dataset_idx, pred_by_idx[dataset_idx], gt_abs))
 
-    slug = (
-        "new_" + slugify_ckpt(transformer_ckpt)
-        + "_vs_unet_" + re.sub(r"[^A-Za-z0-9]+", "_", unet_ckpt.stem).strip("_").lower()
-    )
+    if args.unet_only:
+        slug = "unet_" + slugify_ckpt(unet_ckpt)
+    else:
+        slug = (
+            "new_" + slugify_ckpt(transformer_ckpt)
+            + "_vs_unet_" + re.sub(r"[^A-Za-z0-9]+", "_", unet_ckpt.stem).strip("_").lower()
+        )
     if args.transformer_ema_only_inference_steps is not None:
         steps_slug = "_".join(str(step) for step in args.transformer_ema_only_inference_steps)
         slug += f"_transformer_ema_steps_{steps_slug}_unet_only"
@@ -1181,7 +1195,7 @@ def main():
         write_metrics_csv(metrics_csv, rows)
         write_summary(
             summary_txt,
-            transformer_ckpt=str(transformer_ckpt),
+            transformer_ckpt="" if args.unet_only else str(transformer_ckpt),
             unet_ckpt=str(unet_ckpt),
             dataset_path=dataset_path,
             dataset_len=dataset_len,

@@ -35,7 +35,7 @@ policy:
     clip_sample: True
     set_alpha_to_one: True
     steps_offset: 0
-    prediction_type: epsilon # or sample or v_prediction
+    prediction_type: v_prediction # or sample or v_prediction
 
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
@@ -54,7 +54,7 @@ policy:
 
 
   obs_encoder:
-    fuse_mode: concat # modality-attention or concat
+    fuse_mode: modality-attention # modality-attention or concat
     position_encoding: learnable
     
     
