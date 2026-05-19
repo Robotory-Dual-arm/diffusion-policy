@@ -117,6 +117,19 @@ def load_policy_from_checkpoint(ckpt_path, device, strict=True):
     cfg = payload["cfg"]
     workspace_cls = hydra.utils.get_class(cfg._target_)
     workspace = workspace_cls(cfg)
+    for key, state_dict in payload["state_dicts"].items():
+        if key not in workspace.__dict__ or not hasattr(workspace.__dict__[key], "state_dict"):
+            continue
+        target_state = workspace.__dict__[key].state_dict()
+        for param_name, value in list(state_dict.items()):
+            if (
+                    param_name.endswith("position_embedding")
+                    and param_name in target_state
+                    and tuple(value.shape) != tuple(target_state[param_name].shape)):
+                resized = target_state[param_name].clone()
+                slices = tuple(slice(0, min(a, b)) for a, b in zip(value.shape, resized.shape))
+                resized[slices] = value[slices]
+                state_dict[param_name] = resized
     workspace.load_payload(
         payload=payload,
         exclude_keys=("optimizer",),
@@ -155,6 +168,41 @@ def collate_obs(samples, keys, device):
     return obs
 
 
+def adapt_obs_for_policy(obs, policy):
+    """Handle compatible datasets that store wrench with different history shapes."""
+    params_dict = getattr(policy.normalizer, "params_dict", {})
+    n_obs_steps = getattr(policy, "n_obs_steps", None)
+    low_dim_keys = set(getattr(policy, "low_dim_keys", []))
+    for key, value in list(obs.items()):
+        if key not in params_dict or key == "action":
+            continue
+        if value.ndim >= 5:
+            continue
+        scale = params_dict[key]["scale"]
+        expected_dim = int(scale.shape[0])
+        actual_dim = int(np.prod(value.shape[2:])) if value.ndim > 2 else 1
+        if actual_dim == expected_dim:
+            continue
+
+        # Wrench-encoder datasets store one observation as (C, history).
+        # Older low-dim wrench policies expect the latest wrench vector (C).
+        if value.ndim == 4 and value.shape[2] == expected_dim:
+            value = value[..., -1]
+        elif value.ndim == 4 and value.shape[2] * value.shape[3] == expected_dim:
+            value = value.reshape(value.shape[0], value.shape[1], expected_dim)
+        else:
+            raise RuntimeError(
+                f"Cannot adapt obs key {key}: got shape {tuple(value.shape)}, "
+                f"expected trailing dim {expected_dim}"
+            )
+
+        if key in low_dim_keys and n_obs_steps is not None and value.shape[1] < n_obs_steps:
+            pad = value[:, -1:].repeat(1, n_obs_steps - value.shape[1], *([1] * (value.ndim - 2)))
+            value = torch.cat([pad, value], dim=1)
+        obs[key] = value
+    return obs
+
+
 def get_policy_obs_keys(policy):
     if hasattr(policy, "rgb_keys") and hasattr(policy, "low_dim_keys") and hasattr(policy, "wrench_keys"):
         return list(policy.rgb_keys) + list(policy.low_dim_keys) + list(policy.wrench_keys)
@@ -173,6 +221,7 @@ def predict_abs_actions(policy, samples_by_idx, indices, device, batch_size, see
             batch_indices = indices[start:start + batch_size]
             batch_samples = [samples_by_idx[idx] for idx in batch_indices]
             obs = collate_obs(batch_samples, keys, device)
+            obs = adapt_obs_for_policy(obs, policy)
             result = policy.predict_action(obs)
             rel_pred = result["action_pred"].detach().cpu().numpy()
             for local_idx, dataset_idx in enumerate(batch_indices):

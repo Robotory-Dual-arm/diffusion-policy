@@ -81,9 +81,11 @@ class TransformerForDiffusion(ModuleAttrMixin):
             p_drop_emb: float = 0.1,
             p_drop_attn: float = 0.1,
             causal_attn: bool=False,
+            bidirectional_prefix_steps: Optional[int] = None,
             time_as_cond: bool=True,
             obs_as_cond: bool=False,
             n_cond_layers: int = 0,
+            n_cond_tokens: Optional[int] = None,
         ) -> None:
         super().__init__()
 
@@ -99,17 +101,20 @@ class TransformerForDiffusion(ModuleAttrMixin):
         T = horizon
         if obs_as_cond:
             assert time_as_cond
-            # T_cond = n_obs_steps * (rgb + low_dim) + wrench + time 
-            T_cond = n_obs_steps * (2 + 1) + 1 + 1  # 8
+            if n_cond_tokens is not None:
+                T_cond = n_cond_tokens + 1
+            else:
+                # T_cond = n_obs_steps * (rgb + low_dim) + wrench + time 
+                T_cond = n_obs_steps * (2 + 1) + 1 + 1  # 8
 
-            if no_image:
-                T_cond = n_obs_steps * (1) + 1 + 1  # 4
-                if raw_wrench:
-                    T_cond = n_obs_steps * (1) + 1 # 3
-            if one_image:
-                T_cond = n_obs_steps * (1 + 1) + 1 + 1  # 6
-                if raw_wrench:
-                    T_cond = n_obs_steps * (1 + 1) + 1 # 5
+                if no_image:
+                    T_cond = n_obs_steps * (1) + 1 + 1  # 4
+                    if raw_wrench:
+                        T_cond = n_obs_steps * (1) + 1 # 3
+                if one_image:
+                    T_cond = n_obs_steps * (1 + 1) + 1 + 1  # 6
+                    if raw_wrench:
+                        T_cond = n_obs_steps * (1 + 1) + 1 # 5
 
         
         # input embedding stem
@@ -185,12 +190,8 @@ class TransformerForDiffusion(ModuleAttrMixin):
 
         # attention mask
         if causal_attn: # True
-            # causal mask to ensure that attention is only applied to the left in the input sequence
-            # torch.nn.Transformer uses additive mask as opposed to multiplicative mask in minGPT
-            # therefore, the upper triangle should be -inf and others (including diag) should be 0.
-            sz = T
-            mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-            mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+            # None이면 기존 pure causal, 숫자를 주면 앞 prefix 구간만 bidirectional.
+            mask = self._build_action_mask(T, bidirectional_prefix_steps)
             self.register_buffer("mask", mask) # action self attention mask
             
             if time_as_cond and obs_as_cond:
@@ -262,12 +263,27 @@ class TransformerForDiffusion(ModuleAttrMixin):
         self.time_as_cond = time_as_cond
         self.obs_as_cond = obs_as_cond
         self.encoder_only = encoder_only
+        self.bidirectional_prefix_steps = bidirectional_prefix_steps
 
         # init
         self.apply(self._init_weights)
         logger.info(
             "number of parameters: %e", sum(p.numel() for p in self.parameters())
         )
+
+    @staticmethod
+    def _build_action_mask(T: int, bidirectional_prefix_steps: Optional[int] = None):
+        # torch.nn.Transformer는 0.0=허용, -inf=차단 additive mask를 사용한다.
+        if bidirectional_prefix_steps is None or bidirectional_prefix_steps <= 0:
+            mask = (torch.triu(torch.ones(T, T)) == 1).transpose(0, 1)
+            return mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+
+        prefix_steps = min(int(bidirectional_prefix_steps), T)
+        mask = torch.full((T, T), float('-inf'))
+        mask[:prefix_steps, :prefix_steps] = 0.0
+        for t in range(prefix_steps, T):
+            mask[t, :t + 1] = 0.0
+        return mask
 
     def _init_weights(self, module):
         ignore_types = (nn.Dropout, 
@@ -477,7 +493,7 @@ class TransformerForDiffusion(ModuleAttrMixin):
             x = self.decoder( # action self attention + cross attention to condition
                 tgt=x,
                 memory=memory,
-                tgt_mask=self.mask,
+                tgt_mask=self.mask[:t, :t] if self.mask is not None else None,
                 memory_mask=None
             )
             # (B,T,n_emb)
@@ -560,4 +576,3 @@ def test():
     timestep = torch.tensor(0)
     sample = torch.zeros((4,8,16))
     out = transformer(sample, timestep)
-
