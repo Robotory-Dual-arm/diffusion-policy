@@ -947,6 +947,11 @@ def main():
         action="store_true",
         help="Evaluate only the UNet checkpoint and skip all Transformer checkpoints.",
     )
+    parser.add_argument(
+        "--transformer-only",
+        action="store_true",
+        help="Evaluate only the Transformer checkpoint and skip all UNet checkpoints.",
+    )
     parser.add_argument("--output-dir", default="data/debug_action_vis")
     parser.add_argument(
         "--dataset-source",
@@ -1021,6 +1026,8 @@ def main():
         help="num_inference_steps for --compare-transformer-ckpt. Defaults to the primary EMA-only step if present.",
     )
     args = parser.parse_args()
+    if args.unet_only and args.transformer_only:
+        raise ValueError("--unet-only and --transformer-only are mutually exclusive.")
 
     transformer_ckpt = resolve_path(args.transformer_ckpt)
     unet_ckpt = resolve_path(args.unet_ckpt)
@@ -1034,11 +1041,12 @@ def main():
     else:
         device = torch.device(args.device)
 
-    unet_cfg = load_cfg_for_ckpt(unet_ckpt)
+    unet_cfg = None if args.transformer_only else load_cfg_for_ckpt(unet_ckpt)
     transformer_cfg = None if args.unet_only else load_cfg_for_ckpt(transformer_ckpt)
     dataset_source_cfg = (
-        unet_cfg
-        if args.unet_only or args.dataset_source == "unet"
+        unet_cfg if args.unet_only
+        else transformer_cfg if args.transformer_only
+        else unet_cfg if args.dataset_source == "unet"
         else transformer_cfg
     )
     dataset_cfg = make_dataset_cfg(dataset_source_cfg)
@@ -1052,7 +1060,7 @@ def main():
     all_indices = sorted(set(sample_indices + [args.sample_idx]))
     dataset_action_pose_repr = resolved_dataset_cfg["pose_repr"]["action_pose_repr"]
     transformer_action_pose_repr = None if args.unet_only else action_pose_repr_from_cfg(transformer_cfg)
-    unet_action_pose_repr = action_pose_repr_from_cfg(unet_cfg)
+    unet_action_pose_repr = None if args.transformer_only else action_pose_repr_from_cfg(unet_cfg)
     samples_by_idx, gt_abs_by_idx, base_xyz_by_idx = load_samples(
         dataset=dataset,
         indices=all_indices,
@@ -1061,7 +1069,8 @@ def main():
     print(f"GT dataset action_pose_repr: {dataset_action_pose_repr}")
     if transformer_action_pose_repr is not None:
         print(f"Transformer action_pose_repr: {transformer_action_pose_repr}")
-    print(f"UNet action_pose_repr: {unet_action_pose_repr}")
+    if unet_action_pose_repr is not None:
+        print(f"UNet action_pose_repr: {unet_action_pose_repr}")
 
     pred_abs_by_model = OrderedDict()
 
@@ -1161,21 +1170,22 @@ def main():
         del compare_workspace
         gc.collect()
 
-    print(f"Loading UNet: {unet_ckpt}")
-    unet_workspace = load_policy_from_checkpoint(unet_ckpt, device, strict=False)
-    unet_policy = unet_workspace.ema_model if unet_workspace.ema_model is not None else unet_workspace.model
-    pred_abs_by_model["UNet EMA eval"] = predict_with_inference_steps(
-        unet_policy,
-        None,
-        samples_by_idx,
-        all_indices,
-        device,
-        args.batch_size,
-        args.seed,
-        unet_action_pose_repr,
-    )
-    del unet_workspace
-    gc.collect()
+    if not args.transformer_only:
+        print(f"Loading UNet: {unet_ckpt}")
+        unet_workspace = load_policy_from_checkpoint(unet_ckpt, device, strict=False)
+        unet_policy = unet_workspace.ema_model if unet_workspace.ema_model is not None else unet_workspace.model
+        pred_abs_by_model["UNet EMA eval"] = predict_with_inference_steps(
+            unet_policy,
+            None,
+            samples_by_idx,
+            all_indices,
+            device,
+            args.batch_size,
+            args.seed,
+            unet_action_pose_repr,
+        )
+        del unet_workspace
+        gc.collect()
 
     gt_eval_by_idx = {
         idx: action[eval_start:]
@@ -1205,6 +1215,8 @@ def main():
 
     if args.unet_only:
         slug = "unet_" + slugify_ckpt(unet_ckpt)
+    elif args.transformer_only:
+        slug = "transformer_" + slugify_ckpt(transformer_ckpt)
     else:
         slug = (
             "new_" + slugify_ckpt(transformer_ckpt)
@@ -1245,7 +1257,7 @@ def main():
         write_summary(
             summary_txt,
             transformer_ckpt="" if args.unet_only else str(transformer_ckpt),
-            unet_ckpt=str(unet_ckpt),
+            unet_ckpt="" if args.transformer_only else str(unet_ckpt),
             dataset_path=dataset_path,
             dataset_len=dataset_len,
             n_samples=args.n_samples,
@@ -1263,8 +1275,8 @@ def main():
     if not args.images_only:
         write_sample_metrics(
             sample_metrics,
-            transformer_ckpt=str(transformer_ckpt),
-            unet_ckpt=str(unet_ckpt),
+            transformer_ckpt="" if args.unet_only else str(transformer_ckpt),
+            unet_ckpt="" if args.transformer_only else str(unet_ckpt),
             dataset_path=dataset_path,
             sample_idx=args.sample_idx,
             base_xyz=base_xyz_by_idx[args.sample_idx],
@@ -1317,7 +1329,7 @@ def main():
         pred_eval_by_model,
         rows,
         transformer_ckpt=str(transformer_ckpt),
-        unet_ckpt=str(unet_ckpt),
+        unet_ckpt="" if args.transformer_only else str(unet_ckpt),
         dataset_path=dataset_path,
         dataset_len=dataset_len,
         individual_axis_span_m=args.individual_axis_span_m,

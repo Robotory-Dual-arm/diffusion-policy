@@ -556,7 +556,7 @@ class DualarmInterpolationController(mp.Process):
         # start rtde
         robot_ip = self.robot_ip
 
-        urdf_path = "/home/vision/dualarm_ws/src/doosan-robot2/dsr_description2/urdf/m0609.white.urdf"
+        urdf_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "m0609.white.urdf"))
         doosan_robot = rtb.ERobot.URDF(urdf_path)   
 
         global latest_joint_R, latest_hand_R

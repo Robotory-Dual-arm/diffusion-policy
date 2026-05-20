@@ -556,7 +556,7 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
 
         this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:])) # (B, To, ...) -> (B*To, ...)
 
-        modality_features = list()
+        attention_features = list()
 
         # Image encoding
         vision_features = []
@@ -574,7 +574,7 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             else:
                 vision_feature = raw_vision_feature[:, 0, :]   # CLS token
             vision_features.append(vision_feature.reshape(B, -1)) # (B, To*vision_feature_dim)
-            modality_features.append(vision_feature.reshape(B, To, -1)) # (B, To, vision_feature_dim)
+            attention_features.append(vision_feature.reshape(B, To, -1)) # (B, To, vision_feature_dim)
 
         # low-dim encoding (linear)
         low_dim_features = []
@@ -583,9 +583,7 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             low_dim_feature_t = self.low_dim_encoder(low_dim_t)
             low_dim_features.append(low_dim_feature_t.reshape(B, -1))
         low_dim_features = torch.stack(low_dim_features, dim=1)  # (B, To, low_dim_feature_dim)
-        modality_features.append(low_dim_features)
-        # [(B, To, vision_feature_dim), (B, To, vision_feature_dim), 
-        #  (B, To, low_dim_feature_dim)]   이미지 2개 + low-dim
+        # low_dim is kept as condition tokens, but excluded from modality-attention.
 
         # Force encoding
         if self.force_encoder is not None:
@@ -596,31 +594,35 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             wrench_total = torch.cat(combined_wrench_data, dim=-2) # (B, To=1, num_wrench_component, wrench_hist)
             force_feature = self.force_encoder(wrench_total.reshape(-1, *wrench_total.shape[-2:])) # (B, 1, feature_dim)
             force_features.append(force_feature.reshape(B, -1)) # (B, feature_dim)
-            modality_features.append(force_feature) # (B, 1, feature_dim)
-        # [(B, To, vision_feature_dim), (B, To, vision_feature_dim), 
-        #  (B, To, low_dim_feature_dim), 
-        #  (B, 1, force_feature_dim)]    이미지 2개 + low-dim + force (force는 To=1)
+            attention_features.append(force_feature) # (B, 1, feature_dim)
+        # attention_features: image tokens + force token. low_dim bypasses this attention.
 
 
         # fuse mode
         if self.fuse_mode == 'modality-attention':
-            in_embeds = torch.cat(modality_features, dim=1) # (B, feature_num, feature_dim)
-            if self.position_encoding == 'learnable':
-                if self.position_embedding.device != in_embeds.device:
-                    self.position_embedding = self.position_embedding.to(in_embeds.device)
-                in_embeds = in_embeds + self.position_embedding
-            out_embeds = self.transformer_encoder(in_embeds) # (B, feature_num, feature_dim)
+            if len(attention_features) > 0:
+                in_embeds = torch.cat(attention_features, dim=1) # (B, image_tokens + force_tokens, feature_dim)
+                if self.position_encoding == 'learnable':
+                    if self.position_embedding.device != in_embeds.device:
+                        self.position_embedding = self.position_embedding.to(in_embeds.device)
+                    in_embeds = in_embeds + self.position_embedding
+                out_embeds = self.transformer_encoder(in_embeds)
 
-            # feature 별로 나눠서 보기; 필요없긴 함
-            token_sizes = [x.shape[1] for x in modality_features]
-            attended_modalities = list(torch.split(out_embeds, token_sizes, dim=1))
-            attended_vision = attended_modalities[:len(self.rgb_keys)]
-            attended_low_dim = attended_modalities[len(self.rgb_keys)]
-            if self.force_encoder is not None:
-                attended_force = attended_modalities[len(self.rgb_keys) + 1]
-            token_num = sum(token_sizes)
+                token_sizes = [x.shape[1] for x in attention_features]
+                attended_modalities = list(torch.split(out_embeds, token_sizes, dim=1))
+                attended_vision = attended_modalities[:len(self.rgb_keys)]
+                attended_low_dim = low_dim_features
+                attended_force = attended_modalities[len(self.rgb_keys)] if self.force_encoder is not None else None
+            else:
+                attended_vision = []
+                attended_low_dim = low_dim_features
+                attended_force = None
 
-            nobs_features = out_embeds
+            condition_features = attended_vision + [attended_low_dim]
+            if attended_force is not None:
+                condition_features.append(attended_force)
+            token_num = sum(x.shape[1] for x in condition_features)
+            nobs_features = torch.cat(condition_features, dim=1)
             assert nobs_features.shape[1] == token_num
 
         # elif self.fuse_mode == 'concat':
