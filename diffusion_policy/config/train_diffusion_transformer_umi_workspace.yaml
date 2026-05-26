@@ -73,7 +73,7 @@ policy:
         saturation: 0.2 # 0.5
         hue: 0.03 # 0.08
       
-    use_group_norm: False
+    use_group_norm: True
     share_rgb_model: True
 
   num_inference_steps: 16

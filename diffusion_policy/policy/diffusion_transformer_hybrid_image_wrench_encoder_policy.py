@@ -25,6 +25,19 @@ from diffusion_policy.model.force.force_encoder import CausalConvForceEncoder, G
 from diffusion_policy.model.vision.attention_pool_2d import AttentionPool2d
 
 
+class PretrainedImageNormalize(nn.Module):
+    def __init__(self, mean, std):
+        super().__init__()
+        self.register_buffer('mean', torch.tensor(mean).view(1, -1, 1, 1), persistent=False)
+        self.register_buffer('std', torch.tensor(std).view(1, -1, 1, 1), persistent=False)
+
+    def forward(self, x):
+        x = (x + 1.0) / 2.0
+        mean = self.mean.to(dtype=x.dtype)
+        std = self.std.to(dtype=x.dtype)
+        return (x - mean) / std
+
+
 class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
     def __init__(self, 
             shape_meta: dict,
@@ -131,6 +144,18 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             global_pool=vc.global_pool,  
             num_classes=0  
         )
+        pretrained_model_norm = bool(vc.get('pretrained_model_norm', False))
+        self.pretrained_image_norm = nn.Identity()
+        if pretrained_model_norm:
+            data_cfg = timm.data.resolve_model_data_config(vision_encoder)
+            self.pretrained_image_norm = PretrainedImageNormalize(
+                mean=data_cfg['mean'],
+                std=data_cfg['std']
+            )
+            print(
+                "Using pretrained image norm: "
+                f"mean={data_cfg['mean']}, std={data_cfg['std']}"
+            )
         if vc.frozen:
             assert vc.pretrained, "Frozen vision encoder must be pretrained"
             for param in vision_encoder.parameters():
@@ -326,6 +351,27 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
     
     # ========= inference  ============
 
+    def _apply_image_transform(self, obs_dict, transform):
+        transformed_obs = dict(obs_dict)
+        for key in self.rgb_keys:
+            obs = obs_dict[key]
+            img = obs.reshape(-1, *obs.shape[2:])
+            img = transform(img)
+            transformed_obs[key] = img.reshape(*obs.shape[:2], *img.shape[1:])
+        return transformed_obs
+
+    def _apply_pretrained_image_norm(self, obs_dict):
+        if isinstance(self.pretrained_image_norm, nn.Identity):
+            return obs_dict
+
+        normalized_obs = dict(obs_dict)
+        for key in self.rgb_keys:
+            obs = obs_dict[key]
+            img = obs.reshape(-1, *obs.shape[2:])
+            img = self.pretrained_image_norm(img)
+            normalized_obs[key] = img.reshape(*obs.shape[:2], *img.shape[1:])
+        return normalized_obs
+
     def conditional_sample(self, 
             condition_data, condition_mask,
             cond=None, generator=None,
@@ -373,15 +419,13 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         """
         assert 'past_action' not in obs_dict # not implemented yet
         
-        # image crop, resize, colorjitter
-        for i in range(self.num_image):
-            img = obs_dict[f'image{i}'].reshape(-1, *obs_dict[f'image{i}'].shape[2:])
-            img = self.transform_eval(img)
-            obs_dict[f'image{i}'] = img.reshape(*obs_dict[f'image{i}'].shape[:])
+        # image crop, resize
+        obs_dict = self._apply_image_transform(obs_dict, self.transform_eval)
         
 
         # normalize input
         nobs = self.normalizer.normalize(obs_dict)
+        nobs = self._apply_pretrained_image_norm(nobs)
         value = next(iter(nobs.values()))
         B, To = value.shape[:2]
         T = self.horizon
@@ -529,14 +573,12 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         """
         assert 'past_action' not in obs_dict # not implemented yet
 
-        # image crop, resize, colorjitter
-        for i in range(self.num_image):
-            img = obs_dict[f'image{i}'].reshape(-1, *obs_dict[f'image{i}'].shape[2:])
-            img = self.transform_eval(img)
-            obs_dict[f'image{i}'] = img.reshape(*obs_dict[f'image{i}'].shape[:])
+        # image crop, resize
+        obs_dict = self._apply_image_transform(obs_dict, self.transform_eval)
 
         # normalize input
         nobs = self.normalizer.normalize(obs_dict)
+        nobs = self._apply_pretrained_image_norm(nobs)
         value = next(iter(nobs.values()))
         B, To = value.shape[:2]
         Da = self.action_dim
@@ -759,13 +801,11 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         assert 'valid_mask' not in batch
 
         # image crop, resize, colorjitter
-        for i in range(self.num_image):
-            img = batch['obs'][f'image{i}'].reshape(-1, *batch['obs'][f'image{i}'].shape[2:])
-            img = self.transform_train(img)
-            batch['obs'][f'image{i}'] = img.reshape(*batch['obs'][f'image{i}'].shape[:])
+        obs_dict = self._apply_image_transform(batch['obs'], self.transform_train)
 
 
-        nobs = self.normalizer.normalize(batch['obs'])
+        nobs = self.normalizer.normalize(obs_dict)
+        nobs = self._apply_pretrained_image_norm(nobs)
         nactions = self.normalizer['action'].normalize(batch['action'])
         To = self.n_obs_steps
         B = nactions.shape[0]

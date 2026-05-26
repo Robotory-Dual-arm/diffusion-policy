@@ -49,6 +49,51 @@ MODEL_COLORS = {
     "UNet EMA eval": "#d62728",
 }
 
+STEP_MODEL_COLORS = {
+    4: "#1f77b4",
+    8: "#2ca02c",
+    12: "#ff7f0e",
+    16: "#9467bd",
+    32: "#8c564b",
+    64: "#17becf",
+}
+
+FALLBACK_MODEL_COLORS = [
+    "#1f77b4",
+    "#ff7f0e",
+    "#2ca02c",
+    "#9467bd",
+    "#8c564b",
+    "#17becf",
+    "#bcbd22",
+    "#e377c2",
+]
+
+
+def preferred_model_color(name):
+    if name in MODEL_COLORS:
+        return MODEL_COLORS[name]
+    match = re.search(r"steps=(\d+)", name)
+    if match is not None:
+        return STEP_MODEL_COLORS.get(int(match.group(1)))
+    return None
+
+
+def model_colors_for(model_names):
+    colors = {}
+    used = {MODEL_COLORS["GT"]}
+    fallback_idx = 0
+    for name in model_names:
+        color = preferred_model_color(name)
+        if color is None or color in used:
+            while FALLBACK_MODEL_COLORS[fallback_idx % len(FALLBACK_MODEL_COLORS)] in used:
+                fallback_idx += 1
+            color = FALLBACK_MODEL_COLORS[fallback_idx % len(FALLBACK_MODEL_COLORS)]
+            fallback_idx += 1
+        colors[name] = color
+        used.add(color)
+    return colors
+
 
 DEFAULT_TRANSFORMER_CKPT = (
     "data/outputs/2026.05.05/21.35.58_train_diffusion_transformer_hybrid_"
@@ -209,10 +254,50 @@ def get_policy_obs_keys(policy):
     return [key for key in policy.normalizer.params_dict.keys() if key != "action"]
 
 
-def predict_abs_actions(policy, samples_by_idx, indices, device, batch_size, seed, action_pose_repr):
+def apply_tcp_offset_to_obs(obs, tcp_offset_key, tcp_offset_m, latest_only=True):
+    if tcp_offset_m is None or tcp_offset_key not in obs:
+        return obs
+    value = obs[tcp_offset_key].clone()
+    offset = torch.as_tensor(tcp_offset_m, dtype=value.dtype, device=value.device)
+    if offset.shape != (3,):
+        raise ValueError(f"tcp_offset_m must have 3 values, got {tuple(offset.shape)}")
+    if value.shape[-1] < 3:
+        raise ValueError(f"{tcp_offset_key} must have at least 3 position dims, got {tuple(value.shape)}")
+    if latest_only:
+        value[:, -1, :3] = value[:, -1, :3] + offset
+    else:
+        value[..., :3] = value[..., :3] + offset
+    obs[tcp_offset_key] = value
+    return obs
+
+
+def env_obs_with_tcp_offset(env_obs, tcp_offset_key, tcp_offset_m, latest_only=True):
+    env_obs = {key: np.array(value, copy=True) for key, value in env_obs.items()}
+    if tcp_offset_m is None or tcp_offset_key not in env_obs:
+        return env_obs
+    offset = np.asarray(tcp_offset_m, dtype=env_obs[tcp_offset_key].dtype)
+    if latest_only:
+        env_obs[tcp_offset_key][-1, :3] += offset
+    else:
+        env_obs[tcp_offset_key][..., :3] += offset
+    return env_obs
+
+
+def predict_abs_actions(
+        policy,
+        samples_by_idx,
+        indices,
+        device,
+        batch_size,
+        seed,
+        action_pose_repr,
+        tcp_offset_m=None,
+        tcp_offset_key="robot_pose_R",
+        tcp_offset_latest_only=True):
     policy.eval()
     keys = get_policy_obs_keys(policy)
     pred_by_idx = {}
+    tcp_offset_m = None if tcp_offset_m is None else tuple(float(v) for v in tcp_offset_m)
     torch.manual_seed(seed)
     if device.type == "cuda":
         torch.cuda.manual_seed_all(seed)
@@ -221,11 +306,23 @@ def predict_abs_actions(policy, samples_by_idx, indices, device, batch_size, see
             batch_indices = indices[start:start + batch_size]
             batch_samples = [samples_by_idx[idx] for idx in batch_indices]
             obs = collate_obs(batch_samples, keys, device)
+            obs = apply_tcp_offset_to_obs(
+                obs,
+                tcp_offset_key=tcp_offset_key,
+                tcp_offset_m=tcp_offset_m,
+                latest_only=tcp_offset_latest_only,
+            )
             obs = adapt_obs_for_policy(obs, policy)
             result = policy.predict_action(obs)
             rel_pred = result["action_pred"].detach().cpu().numpy()
             for local_idx, dataset_idx in enumerate(batch_indices):
                 env_obs = obs_to_numpy(samples_by_idx[dataset_idx]["obs"])
+                env_obs = env_obs_with_tcp_offset(
+                    env_obs,
+                    tcp_offset_key=tcp_offset_key,
+                    tcp_offset_m=tcp_offset_m,
+                    latest_only=tcp_offset_latest_only,
+                )
                 pred_by_idx[dataset_idx] = action_to_abs(
                     rel_pred[local_idx],
                     env_obs,
@@ -236,7 +333,18 @@ def predict_abs_actions(policy, samples_by_idx, indices, device, batch_size, see
     return pred_by_idx
 
 
-def predict_with_inference_steps(policy, steps, samples_by_idx, indices, device, batch_size, seed, action_pose_repr):
+def predict_with_inference_steps(
+        policy,
+        steps,
+        samples_by_idx,
+        indices,
+        device,
+        batch_size,
+        seed,
+        action_pose_repr,
+        tcp_offset_m=None,
+        tcp_offset_key="robot_pose_R",
+        tcp_offset_latest_only=True):
     old_steps = getattr(policy, "num_inference_steps", None)
     if steps is not None:
         policy.num_inference_steps = int(steps)
@@ -249,10 +357,47 @@ def predict_with_inference_steps(policy, steps, samples_by_idx, indices, device,
             batch_size,
             seed,
             action_pose_repr,
+            tcp_offset_m=tcp_offset_m,
+            tcp_offset_key=tcp_offset_key,
+            tcp_offset_latest_only=tcp_offset_latest_only,
         )
     finally:
         if old_steps is not None:
             policy.num_inference_steps = old_steps
+
+
+def latest_obs_step_in_episode(dataset, dataset_idx):
+    buffer_start_idx, buffer_end_idx, sample_start_idx, _ = dataset.sampler.indices[dataset_idx]
+    latest_obs_t = int(dataset.n_obs_steps) - 1
+    buffer_len = int(buffer_end_idx - buffer_start_idx)
+    buffer_offset = latest_obs_t - int(sample_start_idx)
+    buffer_offset = min(max(buffer_offset, 0), buffer_len - 1)
+    latest_buffer_idx = int(buffer_start_idx) + buffer_offset
+
+    episode_ends = np.asarray(dataset.replay_buffer.episode_ends[:], dtype=np.int64)
+    episode_idx = int(np.searchsorted(episode_ends, latest_buffer_idx, side="right"))
+    episode_start = 0 if episode_idx == 0 else int(episode_ends[episode_idx - 1])
+    return episode_idx, latest_buffer_idx - episode_start
+
+
+def select_demo_step_indices(dataset, demo_steps, max_count):
+    demo_steps = set(int(step) for step in demo_steps)
+    selected = []
+    seen = set()
+    for dataset_idx in range(len(dataset)):
+        episode_idx, step_in_episode = latest_obs_step_in_episode(dataset, dataset_idx)
+        key = (episode_idx, step_in_episode)
+        if step_in_episode in demo_steps and key not in seen:
+            selected.append(dataset_idx)
+            seen.add(key)
+            if len(selected) >= max_count:
+                break
+    if len(selected) < max_count:
+        raise RuntimeError(
+            f"Only found {len(selected)} demo-step samples for steps {sorted(demo_steps)}, "
+            f"requested {max_count}."
+        )
+    return selected
 
 
 def load_samples(dataset, indices, action_pose_repr):
@@ -420,23 +565,12 @@ def plotly_equal_scene(centers, radius):
 
 
 def write_sample_plotly(path, gt_abs, preds, title, axis_limits=None):
-    colors = {
-        "GT": "#111111",
-        "Transformer EMA eval": "#1f77b4",
-        "Transformer raw model": "#17becf",
-        "Transformer v-pred EMA steps=16": "#9467bd",
-        "Transformer epsilon EMA steps=16": "#ff7f0e",
-        "Transformer EMA eval steps=16": "#9467bd",
-        "Transformer raw model steps=16": "#8c564b",
-        "Transformer EMA eval steps=32": "#ff7f0e",
-        "Transformer raw model steps=32": "#bcbd22",
-        "UNet EMA eval": "#d62728",
-    }
+    colors = model_colors_for(preds.keys())
     fig = go.Figure()
     centers, radius = axis_limits if axis_limits is not None else xyz_limits(gt_abs, preds)
-    add_plotly_traj(fig, gt_abs[:, :3], "GT", colors["GT"], width=2.0)
+    add_plotly_traj(fig, gt_abs[:, :3], "GT", MODEL_COLORS["GT"], width=2.0)
     for name, pred_abs in preds.items():
-        add_plotly_traj(fig, pred_abs[:, :3], name, colors.get(name, "#9467bd"), width=1.5)
+        add_plotly_traj(fig, pred_abs[:, :3], name, colors[name], width=1.5)
     fig.update_layout(
         title=title,
         scene=plotly_equal_scene(centers, radius),
@@ -446,18 +580,7 @@ def write_sample_plotly(path, gt_abs, preds, title, axis_limits=None):
 
 
 def write_all_plotly(path, indices, gt_abs_by_idx, pred_abs_by_model, axis_limits=None):
-    colors = {
-        "GT": "#111111",
-        "Transformer EMA eval": "#1f77b4",
-        "Transformer raw model": "#17becf",
-        "Transformer v-pred EMA steps=16": "#9467bd",
-        "Transformer epsilon EMA steps=16": "#ff7f0e",
-        "Transformer EMA eval steps=16": "#9467bd",
-        "Transformer raw model steps=16": "#8c564b",
-        "Transformer EMA eval steps=32": "#ff7f0e",
-        "Transformer raw model steps=32": "#bcbd22",
-        "UNet EMA eval": "#d62728",
-    }
+    colors = model_colors_for(pred_abs_by_model.keys())
     fig = go.Figure()
     all_points = []
     for dataset_idx in indices:
@@ -465,7 +588,7 @@ def write_all_plotly(path, indices, gt_abs_by_idx, pred_abs_by_model, axis_limit
         add_plotly_traj(
             fig, gt_abs_by_idx[dataset_idx][:, :3],
             f"GT idx {dataset_idx}",
-            colors["GT"],
+            MODEL_COLORS["GT"],
             width=1.2,
             opacity=0.25,
             legendgroup="GT",
@@ -475,7 +598,7 @@ def write_all_plotly(path, indices, gt_abs_by_idx, pred_abs_by_model, axis_limit
             add_plotly_traj(
                 fig, pred_by_idx[dataset_idx][:, :3],
                 f"{name} idx {dataset_idx}",
-                colors.get(name, "#9467bd"),
+                colors[name],
                 width=1.2,
                 opacity=0.32,
                 legendgroup=name,
@@ -509,11 +632,12 @@ def set_axes_equal(ax):
 
 
 def write_sample_png(path, gt_abs, preds, title, axis_limits=None):
+    colors = model_colors_for(preds.keys())
     fig = plt.figure(figsize=(12, 7))
     ax3d = fig.add_subplot(1, 2, 1, projection="3d")
     plot_traj_3d(ax3d, gt_abs[:, :3], "GT", MODEL_COLORS["GT"], linewidth=1.8)
     for name, pred_abs in preds.items():
-        plot_traj_3d(ax3d, pred_abs[:, :3], name, MODEL_COLORS.get(name, "#9467bd"), linewidth=1.4)
+        plot_traj_3d(ax3d, pred_abs[:, :3], name, colors[name], linewidth=1.4)
     ax3d.set_title("3D TCP trajectory")
     ax3d.set_xlabel("x (m)")
     ax3d.set_ylabel("y (m)")
@@ -529,7 +653,7 @@ def write_sample_png(path, gt_abs, preds, title, axis_limits=None):
     for dim, style, label in zip(range(3), ["-", "--", ":"], ["GT x", "GT y", "GT z"]):
         ax.plot(t, gt_abs[:, dim], color=MODEL_COLORS["GT"], linestyle=style, linewidth=2.2, label=label)
     for name, pred_abs in preds.items():
-        color = MODEL_COLORS.get(name, "#9467bd")
+        color = colors[name]
         ax.plot(t, pred_abs[:, 0], color=color, linestyle="-", linewidth=1.6, label=f"{name} x")
         ax.plot(t, pred_abs[:, 1], color=color, linestyle="--", linewidth=1.4, label=f"{name} y")
         ax.plot(t, pred_abs[:, 2], color=color, linestyle=":", linewidth=1.4, label=f"{name} z")
@@ -617,11 +741,12 @@ def write_sample_panels_png(path, gt_abs, preds, title, axis_limits=None):
     ncols = 3 if n > 2 else max(1, n)
     nrows = int(math.ceil(n / ncols))
     centers, radius = axis_limits if axis_limits is not None else xyz_limits(gt_abs, preds)
+    colors = model_colors_for(preds.keys())
     fig = plt.figure(figsize=(5.2 * ncols, 4.6 * nrows))
     for plot_idx, (name, pred_abs) in enumerate(preds.items(), start=1):
         ax = fig.add_subplot(nrows, ncols, plot_idx, projection="3d")
         plot_traj_3d(ax, gt_abs[:, :3], "GT", MODEL_COLORS["GT"], linewidth=1.8)
-        plot_traj_3d(ax, pred_abs[:, :3], name, MODEL_COLORS.get(name, "#9467bd"), linewidth=1.4)
+        plot_traj_3d(ax, pred_abs[:, :3], name, colors[name], linewidth=1.4)
         apply_xyz_limits(ax, centers, radius)
         ax.set_title(name, fontsize=10)
         ax.set_xlabel("x")
@@ -720,6 +845,7 @@ def write_pair_panels_with_errors_png(path, gt_abs, preds, title, axis_limits=No
     n = len(panel_preds)
     plot_cols = max(3, n) if context is not None else n
     centers, radius = axis_limits if axis_limits is not None else xyz_limits(gt_abs, panel_preds)
+    colors = model_colors_for(panel_preds.keys())
     if context is None:
         fig = plt.figure(figsize=(5.1 * plot_cols, 7.8))
         grid = fig.add_gridspec(2, plot_cols, height_ratios=[3.0, 1.35])
@@ -732,7 +858,7 @@ def write_pair_panels_with_errors_png(path, gt_abs, preds, title, axis_limits=No
     for col, (name, pred_abs) in enumerate(panel_preds.items()):
         ax = fig.add_subplot(grid[0, col], projection="3d")
         plot_traj_3d(ax, gt_abs[:, :3], "GT", MODEL_COLORS["GT"], linewidth=1.8)
-        plot_traj_3d(ax, pred_abs[:, :3], name, MODEL_COLORS.get(name, "#9467bd"), linewidth=1.4)
+        plot_traj_3d(ax, pred_abs[:, :3], name, colors[name], linewidth=1.4)
         panel_centers, panel_radius = centers, radius
         if not points_fit_limits(pred_abs[:, :3], centers, radius):
             panel_centers, panel_radius = centered_fixed_span_limits(pred_abs[:, :3], radius)
@@ -755,7 +881,7 @@ def write_pair_panels_with_errors_png(path, gt_abs, preds, title, axis_limits=No
     ax_rot = fig.add_subplot(grid[error_row, split_col:])
     for name, pred_abs in panel_preds.items():
         pos_err_mm, rot_err_deg = trajectory_errors(pred_abs, gt_abs)
-        color = MODEL_COLORS.get(name, "#9467bd")
+        color = colors[name]
         ax_pos.plot(t, pos_err_mm, label=name, color=color, linewidth=1.6)
         ax_rot.plot(t, rot_err_deg, label=name, color=color, linewidth=1.6)
     ax_pos.set_title("position error")
@@ -787,9 +913,10 @@ def trajectory_errors(pred_abs, gt_abs):
 def write_error_over_horizon_png(path, gt_abs, preds, title):
     t = np.arange(gt_abs.shape[0])
     fig, axes = plt.subplots(2, 1, figsize=(11, 7), sharex=True)
+    colors = model_colors_for(preds.keys())
     for name, pred_abs in preds.items():
         pos_err_mm, rot_err_deg = trajectory_errors(pred_abs, gt_abs)
-        color = MODEL_COLORS.get(name, "#9467bd")
+        color = colors[name]
         axes[0].plot(t, pos_err_mm, label=name, color=color, linewidth=2.0)
         axes[1].plot(t, rot_err_deg, label=name, color=color, linewidth=2.0)
     axes[0].set_title("position error")
@@ -952,6 +1079,11 @@ def main():
         action="store_true",
         help="Evaluate only the Transformer checkpoint and skip all UNet checkpoints.",
     )
+    parser.add_argument(
+        "--skip-unet",
+        action="store_true",
+        help="Alias for --transformer-only.",
+    )
     parser.add_argument("--output-dir", default="data/debug_action_vis")
     parser.add_argument(
         "--dataset-source",
@@ -966,6 +1098,24 @@ def main():
     )
     parser.add_argument("--sample-idx", type=int, default=10)
     parser.add_argument("--n-samples", type=int, default=100)
+    parser.add_argument(
+        "--random-samples",
+        action="store_true",
+        help="Select --n-samples dataset indices uniformly at random without replacement.",
+    )
+    parser.add_argument(
+        "--demo-step-samples",
+        type=int,
+        nargs="*",
+        default=None,
+        help="If set, select samples whose latest observation is at these per-demo step indices.",
+    )
+    parser.add_argument(
+        "--demo-step-total",
+        type=int,
+        default=None,
+        help="Total number of samples to select with --demo-step-samples. Defaults to --n-samples.",
+    )
     parser.add_argument("--traj-start", type=int, default=0)
     parser.add_argument("--traj-count", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=8)
@@ -1010,6 +1160,33 @@ def main():
         help="Override label for the primary Transformer EMA when using --transformer-ema-only-inference-steps.",
     )
     parser.add_argument(
+        "--tcp-offset-m",
+        type=float,
+        nargs=3,
+        default=None,
+        help="Offset the policy input TCP position by this xyz vector in meters.",
+    )
+    parser.add_argument(
+        "--tcp-offset-key",
+        default="robot_pose_R",
+        help="Observation key to offset when --tcp-offset-m is set.",
+    )
+    parser.add_argument(
+        "--tcp-offset-all-obs-steps",
+        action="store_true",
+        help="Apply --tcp-offset-m to all obs steps instead of only the latest TCP obs.",
+    )
+    parser.add_argument(
+        "--tcp-offset-label",
+        default="TCP offset",
+        help="Label suffix for predictions generated with --tcp-offset-m.",
+    )
+    parser.add_argument(
+        "--include-unoffset-baseline",
+        action="store_true",
+        help="When --tcp-offset-m is set, also plot the same Transformer without the TCP offset.",
+    )
+    parser.add_argument(
         "--compare-transformer-ckpt",
         default=None,
         help="Optional second Transformer checkpoint to plot as an EMA comparison.",
@@ -1026,8 +1203,10 @@ def main():
         help="num_inference_steps for --compare-transformer-ckpt. Defaults to the primary EMA-only step if present.",
     )
     args = parser.parse_args()
-    if args.unet_only and args.transformer_only:
-        raise ValueError("--unet-only and --transformer-only are mutually exclusive.")
+
+    transformer_only = args.transformer_only or args.skip_unet
+    if args.unet_only and transformer_only:
+        raise ValueError("--unet-only and --transformer-only/--skip-unet are mutually exclusive.")
 
     transformer_ckpt = resolve_path(args.transformer_ckpt)
     unet_ckpt = resolve_path(args.unet_ckpt)
@@ -1041,11 +1220,11 @@ def main():
     else:
         device = torch.device(args.device)
 
-    unet_cfg = None if args.transformer_only else load_cfg_for_ckpt(unet_ckpt)
+    unet_cfg = None if transformer_only else load_cfg_for_ckpt(unet_ckpt)
     transformer_cfg = None if args.unet_only else load_cfg_for_ckpt(transformer_ckpt)
     dataset_source_cfg = (
         unet_cfg if args.unet_only
-        else transformer_cfg if args.transformer_only
+        else transformer_cfg if transformer_only
         else unet_cfg if args.dataset_source == "unet"
         else transformer_cfg
     )
@@ -1056,11 +1235,24 @@ def main():
     dataset_path = str(resolve_path(resolved_dataset_cfg["dataset_path"]))
     eval_start = int(resolved_dataset_cfg["n_obs_steps"]) - 1
 
-    sample_indices = np.linspace(0, dataset_len - 1, args.n_samples, dtype=int).tolist()
-    all_indices = sorted(set(sample_indices + [args.sample_idx]))
+    if args.demo_step_samples:
+        sample_indices = select_demo_step_indices(
+            dataset,
+            demo_steps=args.demo_step_samples,
+            max_count=args.demo_step_total or args.n_samples,
+        )
+    elif args.random_samples:
+        rng = np.random.default_rng(args.seed)
+        sample_indices = sorted(rng.choice(dataset_len, size=args.n_samples, replace=False).astype(int).tolist())
+    else:
+        sample_indices = np.linspace(0, dataset_len - 1, args.n_samples, dtype=int).tolist()
+    sample_idx = args.sample_idx
+    if (args.demo_step_samples or args.random_samples) and sample_idx not in sample_indices:
+        sample_idx = sample_indices[0]
+    all_indices = sorted(set(sample_indices + [sample_idx]))
     dataset_action_pose_repr = resolved_dataset_cfg["pose_repr"]["action_pose_repr"]
     transformer_action_pose_repr = None if args.unet_only else action_pose_repr_from_cfg(transformer_cfg)
-    unet_action_pose_repr = None if args.transformer_only else action_pose_repr_from_cfg(unet_cfg)
+    unet_action_pose_repr = None if transformer_only else action_pose_repr_from_cfg(unet_cfg)
     samples_by_idx, gt_abs_by_idx, base_xyz_by_idx = load_samples(
         dataset=dataset,
         indices=all_indices,
@@ -1071,6 +1263,12 @@ def main():
         print(f"Transformer action_pose_repr: {transformer_action_pose_repr}")
     if unet_action_pose_repr is not None:
         print(f"UNet action_pose_repr: {unet_action_pose_repr}")
+    tcp_offset_latest_only = not args.tcp_offset_all_obs_steps
+    if args.tcp_offset_m is not None:
+        print(
+            f"TCP offset for model input: key={args.tcp_offset_key}, "
+            f"xyz_m={args.tcp_offset_m}, latest_only={tcp_offset_latest_only}"
+        )
 
     pred_abs_by_model = OrderedDict()
 
@@ -1088,6 +1286,9 @@ def main():
                     args.batch_size,
                     args.seed,
                     transformer_action_pose_repr,
+                    tcp_offset_m=args.tcp_offset_m,
+                    tcp_offset_key=args.tcp_offset_key,
+                    tcp_offset_latest_only=tcp_offset_latest_only,
                 )
             pred_abs_by_model["Transformer raw model"] = predict_with_inference_steps(
                 transformer_workspace.model,
@@ -1098,6 +1299,9 @@ def main():
                     args.batch_size,
                     args.seed,
                     transformer_action_pose_repr,
+                    tcp_offset_m=args.tcp_offset_m,
+                    tcp_offset_key=args.tcp_offset_key,
+                    tcp_offset_latest_only=tcp_offset_latest_only,
                 )
             for steps in args.transformer_extra_inference_steps:
                 if transformer_workspace.ema_model is not None:
@@ -1110,6 +1314,9 @@ def main():
                         args.batch_size,
                         args.seed,
                         transformer_action_pose_repr,
+                        tcp_offset_m=args.tcp_offset_m,
+                        tcp_offset_key=args.tcp_offset_key,
+                        tcp_offset_latest_only=tcp_offset_latest_only,
                     )
                 pred_abs_by_model[f"Transformer raw model steps={steps}"] = predict_with_inference_steps(
                     transformer_workspace.model,
@@ -1120,15 +1327,34 @@ def main():
                     args.batch_size,
                     args.seed,
                     transformer_action_pose_repr,
+                    tcp_offset_m=args.tcp_offset_m,
+                    tcp_offset_key=args.tcp_offset_key,
+                    tcp_offset_latest_only=tcp_offset_latest_only,
                 )
         else:
             if transformer_workspace.ema_model is None:
                 raise RuntimeError("--transformer-ema-only-inference-steps requires an EMA model in the checkpoint.")
             for steps in args.transformer_ema_only_inference_steps:
-                model_name = (
+                base_model_name = (
                     f"{args.transformer_ema_label} steps={steps}"
                     if args.transformer_ema_label is not None
                     else f"Transformer EMA eval steps={steps}"
+                )
+                if args.tcp_offset_m is not None and args.include_unoffset_baseline:
+                    pred_abs_by_model[base_model_name] = predict_with_inference_steps(
+                        transformer_workspace.ema_model,
+                        steps,
+                        samples_by_idx,
+                        all_indices,
+                        device,
+                        args.batch_size,
+                        args.seed,
+                        transformer_action_pose_repr,
+                    )
+                model_name = (
+                    f"{base_model_name} {args.tcp_offset_label}"
+                    if args.tcp_offset_m is not None
+                    else base_model_name
                 )
                 pred_abs_by_model[model_name] = predict_with_inference_steps(
                     transformer_workspace.ema_model,
@@ -1139,6 +1365,9 @@ def main():
                     args.batch_size,
                     args.seed,
                     transformer_action_pose_repr,
+                    tcp_offset_m=args.tcp_offset_m,
+                    tcp_offset_key=args.tcp_offset_key,
+                    tcp_offset_latest_only=tcp_offset_latest_only,
                 )
         del transformer_workspace
         gc.collect()
@@ -1166,11 +1395,14 @@ def main():
             args.batch_size,
             args.seed,
             compare_action_pose_repr,
+            tcp_offset_m=args.tcp_offset_m,
+            tcp_offset_key=args.tcp_offset_key,
+            tcp_offset_latest_only=tcp_offset_latest_only,
         )
         del compare_workspace
         gc.collect()
 
-    if not args.transformer_only:
+    if not transformer_only:
         print(f"Loading UNet: {unet_ckpt}")
         unet_workspace = load_policy_from_checkpoint(unet_ckpt, device, strict=False)
         unet_policy = unet_workspace.ema_model if unet_workspace.ema_model is not None else unet_workspace.model
@@ -1183,6 +1415,9 @@ def main():
             args.batch_size,
             args.seed,
             unet_action_pose_repr,
+            tcp_offset_m=args.tcp_offset_m,
+            tcp_offset_key=args.tcp_offset_key,
+            tcp_offset_latest_only=tcp_offset_latest_only,
         )
         del unet_workspace
         gc.collect()
@@ -1215,7 +1450,7 @@ def main():
 
     if args.unet_only:
         slug = "unet_" + slugify_ckpt(unet_ckpt)
-    elif args.transformer_only:
+    elif transformer_only:
         slug = "transformer_" + slugify_ckpt(transformer_ckpt)
     else:
         slug = (
@@ -1233,22 +1468,22 @@ def main():
         summary_txt = output_dir / "summary.txt"
         overview_png = output_dir / "overview.png"
         all_html = output_dir / "all_samples_3d.html"
-        sample_png = output_dir / f"sample_{args.sample_idx:04d}_overlay_3d.png"
-        sample_panels_png = output_dir / f"sample_{args.sample_idx:04d}_pair_panels_3d.png"
-        sample_html = output_dir / f"sample_{args.sample_idx:04d}_overlay_3d.html"
-        sample_metrics = output_dir / f"sample_{args.sample_idx:04d}_metrics.txt"
-        sample_error_png = output_dir / f"sample_{args.sample_idx:04d}_error_over_horizon.png"
+        sample_png = output_dir / f"sample_{sample_idx:04d}_overlay_3d.png"
+        sample_panels_png = output_dir / f"sample_{sample_idx:04d}_pair_panels_3d.png"
+        sample_html = output_dir / f"sample_{sample_idx:04d}_overlay_3d.html"
+        sample_metrics = output_dir / f"sample_{sample_idx:04d}_metrics.txt"
+        sample_error_png = output_dir / f"sample_{sample_idx:04d}_error_over_horizon.png"
         traj_dir = output_dir / "traj10_individual"
     else:
         metrics_csv = output_dir / f"{slug}_many_{args.n_samples}_samples_metrics.csv"
         summary_txt = output_dir / f"{slug}_many_{args.n_samples}_samples_summary.txt"
         overview_png = output_dir / f"{slug}_many_{args.n_samples}_samples_overview.png"
         all_html = output_dir / f"{slug}_many_{args.n_samples}_samples_3d_all.html"
-        sample_png = output_dir / f"{slug}_sample_{args.sample_idx:04d}_gt_vs_models_3d.png"
-        sample_panels_png = output_dir / f"{slug}_sample_{args.sample_idx:04d}_pair_panels_3d.png"
-        sample_html = output_dir / f"{slug}_sample_{args.sample_idx:04d}_gt_vs_models_3d.html"
-        sample_metrics = output_dir / f"{slug}_sample_{args.sample_idx:04d}_metrics.txt"
-        sample_error_png = output_dir / f"{slug}_sample_{args.sample_idx:04d}_error_over_horizon.png"
+        sample_png = output_dir / f"{slug}_sample_{sample_idx:04d}_gt_vs_models_3d.png"
+        sample_panels_png = output_dir / f"{slug}_sample_{sample_idx:04d}_pair_panels_3d.png"
+        sample_html = output_dir / f"{slug}_sample_{sample_idx:04d}_gt_vs_models_3d.html"
+        sample_metrics = output_dir / f"{slug}_sample_{sample_idx:04d}_metrics.txt"
+        sample_error_png = output_dir / f"{slug}_sample_{sample_idx:04d}_error_over_horizon.png"
         traj_dir = output_dir / f"{slug}_traj10_individual"
 
     summary = summarize_metric_rows(rows)
@@ -1257,7 +1492,7 @@ def main():
         write_summary(
             summary_txt,
             transformer_ckpt="" if args.unet_only else str(transformer_ckpt),
-            unet_ckpt="" if args.transformer_only else str(unet_ckpt),
+            unet_ckpt="" if transformer_only else str(unet_ckpt),
             dataset_path=dataset_path,
             dataset_len=dataset_len,
             n_samples=args.n_samples,
@@ -1266,9 +1501,9 @@ def main():
         write_all_plotly(all_html, sample_indices, gt_eval_by_idx, pred_eval_by_model)
     write_overview_png(overview_png, rows, summary)
 
-    sample_preds = OrderedDict((name, pred_by_idx[args.sample_idx]) for name, pred_by_idx in pred_eval_by_model.items())
+    sample_preds = OrderedDict((name, pred_by_idx[sample_idx]) for name, pred_by_idx in pred_eval_by_model.items())
     sample_axis_limits = fixed_span_xyz_limits(
-        gt_eval_by_idx[args.sample_idx],
+        gt_eval_by_idx[sample_idx],
         sample_preds,
         args.individual_axis_span_m,
     )
@@ -1276,50 +1511,50 @@ def main():
         write_sample_metrics(
             sample_metrics,
             transformer_ckpt="" if args.unet_only else str(transformer_ckpt),
-            unet_ckpt="" if args.transformer_only else str(unet_ckpt),
+            unet_ckpt="" if transformer_only else str(unet_ckpt),
             dataset_path=dataset_path,
-            sample_idx=args.sample_idx,
-            base_xyz=base_xyz_by_idx[args.sample_idx],
-            gt_abs=gt_eval_by_idx[args.sample_idx],
+            sample_idx=sample_idx,
+            base_xyz=base_xyz_by_idx[sample_idx],
+            gt_abs=gt_eval_by_idx[sample_idx],
             preds=sample_preds,
         )
     write_sample_png(
         sample_png,
-        gt_eval_by_idx[args.sample_idx],
+        gt_eval_by_idx[sample_idx],
         sample_preds,
-        title=f"GT vs new Transformer and U-Net, dataset idx {args.sample_idx}",
+        title=f"GT vs new Transformer and U-Net, dataset idx {sample_idx}",
         axis_limits=sample_axis_limits,
     )
     if not args.images_only:
         write_sample_plotly(
             sample_html,
-            gt_eval_by_idx[args.sample_idx],
+            gt_eval_by_idx[sample_idx],
             sample_preds,
-            title=f"GT vs new Transformer and U-Net, dataset idx {args.sample_idx}",
+            title=f"GT vs new Transformer and U-Net, dataset idx {sample_idx}",
             axis_limits=sample_axis_limits,
         )
     write_sample_panels_png(
         sample_panels_png,
-        gt_eval_by_idx[args.sample_idx],
+        gt_eval_by_idx[sample_idx],
         ordered_pair_panel_preds(sample_preds),
-        title=f"Dataset idx {args.sample_idx}: GT paired with each model",
+        title=f"Dataset idx {sample_idx}: GT paired with each model",
         axis_limits=sample_axis_limits,
     )
     if args.transformer_ema_only_inference_steps is None:
         write_clear_sample_pngs(
             output_dir,
             slug,
-            args.sample_idx,
-            gt_eval_by_idx[args.sample_idx],
+            sample_idx,
+            gt_eval_by_idx[sample_idx],
             sample_preds,
             axis_limits=sample_axis_limits,
         )
     else:
         write_error_over_horizon_png(
             sample_error_png,
-            gt_eval_by_idx[args.sample_idx],
+            gt_eval_by_idx[sample_idx],
             sample_preds,
-            title=f"Dataset idx {args.sample_idx}: per-step errors",
+            title=f"Dataset idx {sample_idx}: per-step errors",
         )
     traj_indices = sample_indices[args.traj_start:args.traj_start + args.traj_count]
     write_individual_traj_dir(
@@ -1329,7 +1564,7 @@ def main():
         pred_eval_by_model,
         rows,
         transformer_ckpt=str(transformer_ckpt),
-        unet_ckpt="" if args.transformer_only else str(unet_ckpt),
+        unet_ckpt="" if transformer_only else str(unet_ckpt),
         dataset_path=dataset_path,
         dataset_len=dataset_len,
         individual_axis_span_m=args.individual_axis_span_m,

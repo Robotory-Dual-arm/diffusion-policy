@@ -52,7 +52,10 @@ policy:
   n_emb: 512 # token 밑에 vision, force feature랑 맞춰야된다
   p_drop_emb: 0.0
   p_drop_attn: 0.1 # 0.3
+  
   causal_attn: True
+  bidirectional_prefix_steps: 10 # null: 기존 pure causal, 10: 앞 10개 bidirectional + 뒤 6개 causal
+  
   time_as_cond: True # if false, use BERT like encoder only arch, time as input
   obs_as_cond: ${obs_as_cond}
 
@@ -68,7 +71,8 @@ policy:
     vision_encoder_cfg:
       model_name: 'resnet34.a1_in1k'
       #model_name: 'vit_base_patch32_clip_224.openai'
-      pretrained: False
+      pretrained: True
+      pretrained_model_norm: True # pretrained timm backbone expects model mean/std after image [-1, 1] normalization
       frozen: False
       global_pool: ''
       feature_aggregation: 'attention_pool_2d'
@@ -76,7 +80,7 @@ policy:
       # use for resnet. 32 (7x7) feature_dim=512 // 16 (14x14) feature_dim=256
       downsample_ratio: 32
       
-      use_group_norm: True # if resnet from scratch
+      use_group_norm: False # if resnet from scratch
     
       transforms:
         randomcrop:
@@ -127,7 +131,7 @@ optimizer:
   lr: 0.5e-4
   weight_decay: 1.0e-6
   # pretrained image model
-  obs_encoder_lr: 0.5e-4
+  obs_encoder_lr: 0.5e-5
   obs_encoder_weight_decay: 1.0e-6
   
   betas: [0.9, 0.999] 
