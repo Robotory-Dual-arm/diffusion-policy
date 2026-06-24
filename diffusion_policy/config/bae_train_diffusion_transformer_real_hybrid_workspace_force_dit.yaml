@@ -2,7 +2,7 @@ defaults:
   - _self_
   - task: real_pusht_image
 
-name: train_diffusion_transformer_hybrid
+name: train_diffusion_transformer_hybrid_force_dit
 _target_: diffusion_policy.workspace.train_diffusion_transformer_hybrid_workspace.TrainDiffusionTransformerHybridWorkspace
 
 task_name: ${task.name}
@@ -19,7 +19,7 @@ keypoint_visible_rate: 1.0
 obs_as_cond: True
 
 policy:
-  _target_: diffusion_policy.policy.diffusion_transformer_hybrid_image_wrench_encoder_policy.DiffusionTransformerHybridImagePolicy
+  _target_: diffusion_policy.policy.diffusion_transformer_hybrid_image_wrench_encoder_dit_policy.DiffusionTransformerHybridImageWrenchEncoderDiTPolicy
 
   shape_meta: ${shape_meta}
   
@@ -46,17 +46,14 @@ policy:
   # obs_encoder_group_norm: True
   # eval_fixed_crop: True
 
-  n_layer: 8
-  n_cond_layers: 0  # >0: use transformer encoder for cond, otherwise use MLP
-  n_head: 4  # 6이 더 좋다는 말도 있네요 (ScaleDP)
-  n_emb: 512 # token 밑에 vision, force feature랑 맞춰야된다
+  n_layer: 12
+  n_cond_layers: 0  # not used for vector AdaLN conditioning
+  n_head: 8  # 6이 더 좋다는 말도 있네요 (ScaleDP)
+  n_emb: 512 # visual-force fused feature dim before lowdim concat
   p_drop_emb: 0.0
   p_drop_attn: 0.1 # 0.3
-  
   causal_attn: True
-  bidirectional_prefix_steps: 10 # null: 기존 pure causal, 10: 앞 10개 bidirectional + 뒤 6개 causal
-  
-  time_as_cond: True # if false, use BERT like encoder only arch, time as input
+  time_as_cond: True
   obs_as_cond: ${obs_as_cond}
 
   # scheduler.step params
@@ -64,7 +61,7 @@ policy:
   pose_repr: ${task.pose_repr}
   
   obs_encoder:
-    fuse_mode: modality-attention # modality-attention or concat
+    fuse_mode: modality-attention # image/force tokens only; lowdim is concatenated as vector after fusion
     position_encoding: learnable
     
     
@@ -72,7 +69,6 @@ policy:
       model_name: 'resnet34.a1_in1k'
       #model_name: 'vit_base_patch32_clip_224.openai'
       pretrained: False
-      pretrained_model_norm: False # pretrained timm backbone expects model mean/std after image [-1, 1] normalization
       frozen: False
       global_pool: ''
       feature_aggregation: 'attention_pool_2d'
@@ -80,7 +76,7 @@ policy:
       # use for resnet. 32 (7x7) feature_dim=512 // 16 (14x14) feature_dim=256
       downsample_ratio: 32
       
-      use_group_norm: False # if resnet from scratch
+      use_group_norm: True # if resnet from scratch
     
       transforms:
         randomcrop:

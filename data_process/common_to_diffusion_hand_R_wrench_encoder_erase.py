@@ -37,7 +37,7 @@ data
 """ diffusion data, 10Hz
 data
     demo_0
-        actions (desired_pose position(3), desired_pose rotation_6d(6))
+        actions (current robot pose position(3), current robot pose rotation_6d(6))
         obs
             robot_pose_R   # m, len=3 (x,y,z)
             robot_quat_R   # len=4 (x,y,z,w)
@@ -112,30 +112,6 @@ def quat_to_6d(quats):
     rotation_6d = np.concatenate([r1, r2], axis=1)  # (N, 6)
     return rotation_6d
 
-def rotmat_to_6d(rotation_matrix):
-    """
-    rotation_matrix: (N, 3, 3)
-    return: (N, 6), first two columns of each rotation matrix
-    """
-    rotation_matrix = np.asarray(rotation_matrix)
-    r1 = rotation_matrix[:, :, 0]
-    r2 = rotation_matrix[:, :, 1]
-    return np.concatenate([r1, r2], axis=1)
-
-def desired_pose_to_action(desired_pose):
-    """
-    desired_pose: (N, 6), [x, y, z, rz, ry, rx]
-        position is mm from /desired_pose
-        rotation is Doosan-style ZYX Euler angle in degrees
-    return: (N, 9), [x, y, z] in meters + 6D rotation
-    """
-    desired_pose = np.asarray(desired_pose)
-    desired_position_m = desired_pose[:, :3] / 1000.0
-    desired_rotmat = R.from_euler('ZYX', desired_pose[:, 3:6], degrees=True).as_matrix()
-    desired_rotation_6d = rotmat_to_6d(desired_rotmat)
-    return np.concatenate([desired_position_m, desired_rotation_6d], axis=1)
-
-
 def resize_images(image_list, size=(320, 240)):
     """
     image_list : [img1, img2, ...] (각 img는 numpy array, shape (480,640,3))
@@ -157,7 +133,7 @@ def ema_filter(wrench_data, alpha):
 
 def main():
     input_filenames = ['/home/baetae/Downloads/common_data_height.hdf5']
-    output_filename = '/data/baetae/260519/diffusion_data_height_wrench_encoder_R_image_desired_pose_action_test.hdf5'
+    output_filename = 'data/baetae/260519/diffusion_data_height_wrench_encoder_R_image_current_pose_action_real.hdf5'
     output_demo_idx = 0
     transform = get_image_transform(input_res=(640,480), output_res=(224,224), bgr_to_rgb=True)
 
@@ -190,7 +166,6 @@ def main():
 
                     # input_joint_L = input_obs['joint_L'][::2]
                     input_joint_R = np.asarray(input_obs['joint_R'])[::2]
-                    input_desired_pose = np.asarray(input_obs['desired_pose'])[::2]
                     # input_hand_pose_L = input_obs['hand_L'][::2]
                     input_hand_pose_R = np.asarray(input_obs['hand_R'])[::2]
                     # input_image_H = input_obs['image_H'][::2]
@@ -268,7 +243,6 @@ def main():
 
                     input_timestamp_robot = input_timestamp_robot[valid_robot_mask]
                     input_joint_R = input_joint_R[valid_robot_mask]
-                    input_desired_pose = input_desired_pose[valid_robot_mask]
                     input_hand_pose_R = input_hand_pose_R[valid_robot_mask]
                     # input_image_T = input_image_T[valid_robot_mask]
                     input_image_R = input_image_R[valid_robot_mask]
@@ -285,7 +259,6 @@ def main():
 
                     input_timestamp_robot = input_timestamp_robot[valid_wrench_history_mask]
                     input_joint_R = input_joint_R[valid_wrench_history_mask]
-                    input_desired_pose = input_desired_pose[valid_wrench_history_mask]
                     input_hand_pose_R = input_hand_pose_R[valid_wrench_history_mask]
                     input_image_R = input_image_R[valid_wrench_history_mask]
                     nearest_wrench_indices = nearest_wrench_indices[valid_wrench_history_mask]
@@ -370,8 +343,10 @@ def main():
                     output_obs.create_dataset('wrench_baby_R', data=output_wrench_baby_R_32hist[:-1])
                     
 
-                    # actions 저장: 다음 step의 desired_pose를 position(m) + rotation_6d로 사용
-                    output_demo_n.create_dataset('actions', data=desired_pose_to_action(input_desired_pose[1:]))
+                    # actions 저장: 다음 step의 current TCP pose를 position(m) + rotation_6d로 사용
+                    output_6d_rotation_R = quat_to_6d(output_TCP_quat_R)
+                    output_actions = np.hstack([output_TCP_pose_R, output_6d_rotation_R])
+                    output_demo_n.create_dataset('actions', data=output_actions[1:])
 
                     output_demo_idx += 1
         print("Data conversion completed / output_demo_lem =", output_demo_idx)

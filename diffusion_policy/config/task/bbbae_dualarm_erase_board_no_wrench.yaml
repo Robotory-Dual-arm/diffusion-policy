@@ -1,7 +1,7 @@
-name: bbbae_dualarm_erase_board_wrench_encoder
+name: bbbae_dualarm_erase_board_no_wrench
 
 image_shape: [3, 224, 224]
-dataset_path: /data/baetae/260519/diffusion_data_height_wrench_encoder_R_image_desired_pose_action.hdf5
+dataset_path: data/baetae/260519/diffusion_data_height_wrench_encoder_R_image_current_pose_action_real.hdf5
 
 # relative
 low_dim_obs_horizon: 2

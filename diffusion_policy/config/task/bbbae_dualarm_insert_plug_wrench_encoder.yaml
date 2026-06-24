@@ -1,7 +1,7 @@
 name: bbbae_dualarm_insert_plug_wrench_encoder
 
 image_shape: [3, 224, 224]
-dataset_path: /data/baetae/260508/diffusion_data_plug_wrench_encoder_R_image.hdf5
+dataset_path: data/baetae/260508/diffusion_data_plug_wrench_encoder_R_image.hdf5
 
 # relative
 low_dim_obs_horizon: 2

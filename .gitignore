@@ -17,6 +17,7 @@ fuse.cfg
 
 # Generation results
 results/
+plots/
 
 ray/auth.json
 

@@ -1,13 +1,13 @@
 defaults:
   - _self_
-  - task: real_pusht_image
+  - task: bbbae_dualarm_insert_plug_no_wrench
 
-name: train_diffusion_unet_hybrid
+name: train_flow_matching_unet_hybrid_no_force
 _target_: diffusion_policy.workspace.train_diffusion_unet_hybrid_workspace.TrainDiffusionUnetHybridWorkspace
 
 task_name: ${task.name}
 shape_meta: ${task.shape_meta}
-exp_name: "default"
+exp_name: "flow_matching_no_force"
 
 horizon: 16
 n_obs_steps: 2
@@ -19,74 +19,56 @@ keypoint_visible_rate: 1.0
 obs_as_global_cond: True
 
 policy:
-  _target_: diffusion_policy.policy.bae_diffusion_unet_hybrid_image_wrench_encoder_policy.DiffusionUnetHybridImagePolicy
+  _target_: diffusion_policy.policy.bae_flow_matching_unet_hybrid_image_wrench_encoder_policy.FlowMatchingUnetHybridImagePolicy
 
   shape_meta: ${shape_meta}
-  
-  noise_scheduler:
-    # _target_: diffusers.schedulers.scheduling_ddim.DDIMScheduler
-    _target_: scheduling_ddim.DDIMScheduler
-    num_train_timesteps: 100
-    beta_start: 0.0001
-    beta_end: 0.02
-    # beta_schedule is important
-    # this is the best we found
-    beta_schedule: squaredcos_cap_v2    # beta_start, beta_end 안쓰임
-    clip_sample: True
-    set_alpha_to_one: True
-    steps_offset: 0
-    prediction_type: v_prediction # or sample or v_prediction
 
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
   num_inference_steps: 16
+  flow_time_scale: 100.0
+  flow_t_min: 0.0
+  flow_t_max: 1.0
   obs_as_global_cond: ${obs_as_global_cond}
-  
+
   diffusion_step_embed_dim: 256
   down_dims: [256,512,1024]
   kernel_size: 5
   n_groups: 8
   cond_predict_scale: True
 
-  
   pose_repr: ${task.pose_repr}
 
-
   obs_encoder:
-    fuse_mode: modality-attention # modality-attention or concat
+    fuse_mode: modality-attention
     position_encoding: learnable
-    
-    
+
     vision_encoder_cfg:
       model_name: 'resnet34.a1_in1k'
-      #model_name: 'vit_base_patch32_clip_224.openai'
       pretrained: False
       frozen: False
       global_pool: ''
       feature_aggregation: 'attention_pool_2d'
-    
-      # use for resnet. 32 (7x7) feature_dim=512 // 16 (14x14) feature_dim=256
       downsample_ratio: 32
-      
-      use_group_norm: True # if resnet from scratch
-    
+      use_group_norm: True
+
       transforms:
         randomcrop:
           ratio: 0.95
-        
+
         colorjitter:
           brightness: 0.3
           contrast: 0.4
           saturation: 0.5
           hue: 0.08
           grayscale: 0.005
-      
-    
+
+    # Kept because the shared policy constructor expects this config object.
+    # It is not used when shape_meta has no obs entries with type: wrench.
     force_encoder_cfg:
-      model_name: causalconv # causalconv or gru
-      feature_dim: 512 # vision_feature_dim 이랑 맞춰줘야 modality-attention 가능
-  
+      model_name: causalconv
+      feature_dim: 512
 
 ema:
   _target_: diffusion_policy.model.diffusion.ema_model.EMAModel
@@ -122,24 +104,17 @@ training:
   seed: 42
   debug: False
   resume: True
-  # optimization
   lr_scheduler: cosine
   lr_warmup_steps: 500
   num_epochs: 1000
   gradient_accumulate_every: 1
-  # EMA destroys performance when used with BatchNorm
-  # replace BatchNorm with GroupNorm.
   use_ema: True
-  # training loop control
-  # in epochs
   rollout_every: 100
   checkpoint_every: 100
   val_every: 1
   sample_every: 5
-  # steps per epoch
   max_train_steps: null
   max_val_steps: null
-  # misc
   tqdm_interval_sec: 1.0
 
 logging:
