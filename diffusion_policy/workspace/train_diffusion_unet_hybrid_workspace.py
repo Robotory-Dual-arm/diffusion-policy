@@ -172,6 +172,12 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                         
                         # compute loss
                         raw_loss = self.model.compute_loss(batch)
+                        if not torch.isfinite(raw_loss).all():
+                            raise FloatingPointError(
+                                f"Non-finite train loss at epoch {self.epoch}, "
+                                f"global_step {self.global_step}, batch_idx {batch_idx}: "
+                                f"{raw_loss.detach().item()}"
+                            )
                         loss = raw_loss / cfg.training.gradient_accumulate_every
                         loss.backward()
 
@@ -233,6 +239,12 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                             for batch_idx, batch in enumerate(tepoch):
                                 batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
                                 loss = self.model.compute_loss(batch)
+                                if not torch.isfinite(loss).all():
+                                    raise FloatingPointError(
+                                        f"Non-finite validation loss at epoch {self.epoch}, "
+                                        f"global_step {self.global_step}, batch_idx {batch_idx}: "
+                                        f"{loss.detach().item()}"
+                                    )
                                 
                                 val_losses.append(loss.item())
 
@@ -257,6 +269,11 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                         result = policy.predict_action(obs_dict)
                         pred_action = result['action_pred']
                         mse = torch.nn.functional.mse_loss(pred_action, gt_action)
+                        if not torch.isfinite(mse).all():
+                            raise FloatingPointError(
+                                f"Non-finite train_action_mse_error at epoch {self.epoch}, "
+                                f"global_step {self.global_step}: {mse.detach().item()}"
+                            )
                         step_log['train_action_mse_error'] = mse.item()
                         del batch
                         del obs_dict
