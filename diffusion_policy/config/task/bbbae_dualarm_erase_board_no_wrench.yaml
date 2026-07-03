@@ -95,7 +95,7 @@ dataset:
   # n_latency_steps: ${n_latency_steps}
   use_cache: True
   seed: 42
-  val_ratio: 0.03
+  val_ratio: 0.00
   # max_train_episodes: null
   # delta_action: False
   pose_repr: *pose_repr

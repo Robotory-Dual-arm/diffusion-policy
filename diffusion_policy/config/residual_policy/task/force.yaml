@@ -1,13 +1,18 @@
 # @package task
-name: slow_actual_pose9
+name: force
 
-dataset_path: data/baetae/260618/slow_erase_board_virtual_m.hdf5
-slow_ckpt_path: data/outputs/2026.06.18/slow/slow.ckpt
+dataset_path: data/outputs/residual_policy/data/fast/actual_base_residual.hdf5
+slow_ckpt_path: data/outputs/residual_policy/slow/force/slow_force.ckpt
 
 image_shape: [3, 224, 224]
 low_dim_obs_horizon: 1
 img_obs_horizon: 1
 action_horizon: 1
+
+fast_force_encoder:
+  freeze_force_encoder: True
+  train_force_encoder: False
+  force_encoder_cfg: null
 
 shape_meta: &shape_meta
   obs:
@@ -37,24 +42,26 @@ shape_meta: &shape_meta
       horizon: ${task.low_dim_obs_horizon}
 
   action:
-    shape: [9]
+    shape: [6]
     horizon: ${task.action_horizon}
 
 pose_repr: &pose_repr
   obs_pose_repr: abs
-  action_pose_repr: residual_pose9
+  action_pose_repr: residual_delta6_gt_actual_to_virtual
 
 env_runner:
   _target_: diffusion_policy.env_runner.real_pusht_image_runner.RealPushTImageRunner
 
 dataset:
-  _target_: diffusion_policy.residual_policy.step_dataset.FastResidualStepDataset
+  _target_: diffusion_policy.residual_policy.step_dataset.FastResidualContextStepDataset
   shape_meta: *shape_meta
   dataset_path: ${task.dataset_path}
   base_action_key: base_action_rel
   base_action_source_key: obs/actual_action_rel
-  # Derived on load: pose9(actual[t+1]^-1 @ virtual[t+1]).
-  action_key: obs/residual_pose9_gt_actual_to_virtual
+  base_action_abs_source_key: obs/actual_target_abs
+  action_key: obs/residual_delta6_gt_actual_to_virtual
+  action_target_shift: 1
+  base_action_target_shift: 1
   n_obs_steps: ${dataset_obs_steps}
   use_cache: False
   seed: 42

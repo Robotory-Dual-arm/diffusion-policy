@@ -60,6 +60,7 @@ class FastResidualContextStepPolicy(BaseImagePolicy):
             train_force_encoder: bool = False,
             include_initial_low_dim: bool = True,
             include_initial_wrench: bool = False,
+            include_step_low_dim: bool = False,
             force_encoder_cfg=None,
             step_encoding: str = "none",
         ):
@@ -78,6 +79,7 @@ class FastResidualContextStepPolicy(BaseImagePolicy):
         self.horizon = 1
         self.include_initial_low_dim = bool(include_initial_low_dim)
         self.include_initial_wrench = bool(include_initial_wrench)
+        self.include_step_low_dim = bool(include_step_low_dim)
         self.step_encoding = step_encoding
 
         slow_policy = load_policy_from_workspace_ckpt(
@@ -135,7 +137,8 @@ class FastResidualContextStepPolicy(BaseImagePolicy):
             context_dim += low_dim
         if self.include_initial_wrench:
             context_dim += force_dim
-        step_dim = force_dim + self.base_action_dim + step_encoding_dim
+        step_low_dim = low_dim if self.include_step_low_dim else 0
+        step_dim = step_low_dim + force_dim + self.base_action_dim + step_encoding_dim
         input_dim = context_dim + step_dim
 
         self.head = _mlp(
@@ -152,11 +155,12 @@ class FastResidualContextStepPolicy(BaseImagePolicy):
         print("Frozen slow policy params: %e" % sum(p.numel() for p in self.slow_policy.parameters()))
         print("Fast context-step residual head params: %e" % sum(p.numel() for p in self.head.parameters()))
         print(
-            "Fast context-step inputs: fixed rgb=%s first, fixed low_dim=%s, fixed wrench=%s, per-step wrench=%s + base_action=%s + step_encoding=%s, n_obs_steps=%d"
+            "Fast context-step inputs: fixed rgb=%s first, fixed low_dim=%s, fixed wrench=%s, per-step low_dim=%s + wrench=%s + base_action=%s + step_encoding=%s, n_obs_steps=%d"
             % (
                 self.rgb_keys,
                 self.low_dim_keys if self.include_initial_low_dim else [],
                 self.wrench_keys if self.include_initial_wrench else [],
+                self.low_dim_keys if self.include_step_low_dim else [],
                 self.wrench_keys,
                 self.base_action_key,
                 self.step_encoding,
@@ -262,6 +266,16 @@ class FastResidualContextStepPolicy(BaseImagePolicy):
         context = context[:, None].expand(-1, t, -1)
 
         step_parts = []
+        if self.include_step_low_dim and len(self.low_dim_keys) > 0:
+            step_low_dim = []
+            for key in self.low_dim_keys:
+                value = fast_nobs[key]
+                if value.ndim == 2:
+                    value = value[:, None]
+                if value.shape[1] != t:
+                    value = value[:, -t:]
+                step_low_dim.append(value)
+            step_parts.append(torch.cat(step_low_dim, dim=-1))
         if force_seq is not None:
             if force_seq.shape[1] != t:
                 force_seq = force_seq[:, -t:]

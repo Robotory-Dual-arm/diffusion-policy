@@ -4,7 +4,7 @@ if __name__ == "__main__":
     import pathlib
     import sys
 
-    ROOT_DIR = pathlib.Path(__file__).resolve().parents[2]
+    ROOT_DIR = pathlib.Path(__file__).resolve().parents[3]
     sys.path.append(str(ROOT_DIR))
     os.chdir(ROOT_DIR)
 
@@ -158,8 +158,11 @@ def build_context_sequence_obs(policy, obs_group, context_t, step_indices, devic
     for key in getattr(policy, "low_dim_keys", []):
         if key not in obs_group:
             continue
-        value = np.asarray(obs_group[key])[context_t:context_t + 1]
-        value = np.repeat(value, seq_len, axis=0)
+        if getattr(policy, "include_step_low_dim", False):
+            value = np.asarray(obs_group[key])[step_indices]
+        else:
+            value = np.asarray(obs_group[key])[context_t:context_t + 1]
+            value = np.repeat(value, seq_len, axis=0)
         obs_np[key] = value.astype(np.float32)[None]
 
     for key in getattr(policy, "wrench_keys", []):
@@ -613,15 +616,18 @@ def predict_demo(
         stride,
         max_steps,
         batch_size,
-        virtual_position_scale):
+        virtual_position_scale,
+        fast_action_target_shift):
     obs_group = demo_group["obs"]
     length = len(demo_group["actions"])
-    indices = np.arange(0, length, stride, dtype=np.int64)
+    fast_action_target_shift = int(fast_action_target_shift)
+    indices = np.arange(0, max(0, length - fast_action_target_shift), stride, dtype=np.int64)
     if max_steps is not None:
         indices = indices[:max_steps]
+    target_indices = indices + fast_action_target_shift
 
-    gt_actual = pose_like_to_pose9(np.asarray(obs_group["actual_target_abs"])[indices])
-    gt_virtual = pose_like_to_pose9(np.asarray(obs_group["virtual_target_abs"])[indices])
+    gt_actual = pose_like_to_pose9(np.asarray(obs_group["actual_target_abs"])[target_indices])
+    gt_virtual = pose_like_to_pose9(np.asarray(obs_group["virtual_target_abs"])[target_indices])
 
     slow_pred = []
     fast_pred = []
@@ -636,19 +642,28 @@ def predict_demo(
             for t in batch_indices
         ])
         slow_result = slow_policy.predict_action(slow_obs)
-        slow_actions = slow_result["action"][:, slow_action_index].detach().cpu().numpy()
+        target_action_index = slow_action_index + fast_action_target_shift
+        if target_action_index >= slow_result["action"].shape[1]:
+            raise IndexError(
+                f"slow_action_index + fast_action_target_shift = {target_action_index} "
+                f"but slow action length is {slow_result['action'].shape[1]}"
+            )
+        slow_actions = slow_result["action"][:, target_action_index].detach().cpu().numpy()
 
         batch_slow_abs = []
-        batch_slow_rel = []
         for t, slow_action in zip(batch_indices, slow_actions):
             current_pose9 = current_pose9_for_step(obs_group, int(t), arm)
-            slow_abs, slow_rel = slow_action_to_abs_and_rel(
+            slow_abs, _ = slow_action_to_abs_and_rel(
                 slow_action,
                 current_pose9,
                 slow_action_pose_repr,
             )
             batch_slow_abs.append(slow_abs)
-            batch_slow_rel.append(slow_rel)
+
+        batch_base_rel = []
+        for t, slow_abs in zip(batch_indices, batch_slow_abs):
+            current_pose9 = current_pose9_for_step(obs_group, int(t), arm)
+            batch_base_rel.append(abs_pose9_to_relative_pose9(current_pose9, slow_abs))
 
         fast_obs = collate_policy_obs([
             build_policy_obs(
@@ -656,19 +671,19 @@ def predict_demo(
                 obs_group,
                 int(t),
                 device,
-                base_action_rel=slow_rel,
+                base_action_rel=base_rel,
             )
-            for t, slow_rel in zip(batch_indices, batch_slow_rel)
+            for t, base_rel in zip(batch_indices, batch_base_rel)
         ])
         fast_result = fast_policy.predict_action(fast_obs)
         batch_residual = fast_result["action"][:, 0].detach().cpu().numpy()
 
-        for slow_abs, slow_rel, this_residual in zip(batch_slow_abs, batch_slow_rel, batch_residual):
+        for slow_abs, base_rel, this_residual in zip(batch_slow_abs, batch_base_rel, batch_residual):
             this_fast_abs = apply_residual_action_to_pose9(slow_abs, this_residual)
             slow_pred.append(slow_abs)
             fast_pred.append(this_fast_abs)
             residual_pred.append(this_residual)
-            base_action_rel.append(slow_rel)
+            base_action_rel.append(base_rel)
 
     slow_pred = np.asarray(slow_pred, dtype=np.float32)
     fast_pred = np.asarray(fast_pred, dtype=np.float32)
@@ -695,6 +710,7 @@ def predict_demo(
 
     return {
         "indices": indices,
+        "target_indices": target_indices,
         "gt_actual": gt_actual,
         "gt_virtual": gt_virtual,
         "gt_virtual_plot": gt_virtual_plot,
@@ -718,10 +734,12 @@ def predict_windows(
         arm,
         slow_action_pose_repr,
         anchors,
-        virtual_position_scale):
+        virtual_position_scale,
+        fast_action_target_shift):
     obs_group = demo_group["obs"]
     length = len(demo_group["actions"])
     n_obs_steps = int(getattr(slow_policy, "n_obs_steps", 1))
+    fast_action_target_shift = int(fast_action_target_shift)
     out = []
 
     for anchor in tqdm(anchors, desc=f"{demo_group.name.split('/')[-1]} windows"):
@@ -752,16 +770,28 @@ def predict_windows(
         slow_abs = np.asarray(slow_abs, dtype=np.float32)
         slow_rel = np.asarray(slow_rel, dtype=np.float32)
 
+        target_local_indices = np.arange(
+            fast_action_target_shift,
+            len(slow_abs),
+            dtype=np.int64,
+        )
+        if len(target_local_indices) == 0:
+            continue
+        input_local_indices = target_local_indices - fast_action_target_shift
+        input_gt_indices = gt_indices[input_local_indices]
+        target_gt_indices = gt_indices[target_local_indices]
+        target_slow_abs = slow_abs[target_local_indices]
+
         fast_rel = []
         fast_obs_list = []
-        for gt_idx, this_slow_abs in zip(gt_indices, slow_abs):
-            fast_current_pose9 = current_pose9_for_step(obs_group, int(gt_idx), arm)
+        for input_gt_idx, this_slow_abs in zip(input_gt_indices, target_slow_abs):
+            fast_current_pose9 = current_pose9_for_step(obs_group, int(input_gt_idx), arm)
             this_fast_rel = abs_pose9_to_relative_pose9(fast_current_pose9, this_slow_abs)
             fast_rel.append(this_fast_rel)
             fast_obs_list.append(build_policy_obs(
                 fast_policy,
                 obs_group,
-                int(gt_idx),
+                int(input_gt_idx),
                 device,
                 base_action_rel=this_fast_rel,
             ))
@@ -773,7 +803,7 @@ def predict_windows(
                 fast_policy,
                 obs_group,
                 context_t=anchor,
-                step_indices=gt_indices,
+                step_indices=input_gt_indices,
                 device=device,
                 base_action_rel_seq=fast_rel,
             )
@@ -782,11 +812,11 @@ def predict_windows(
         elif hasattr(fast_policy, "predict_step"):
             residual = []
             temporal_hidden = None
-            for gt_idx, this_fast_rel in zip(gt_indices, fast_rel):
+            for input_gt_idx, this_fast_rel in zip(input_gt_indices, fast_rel):
                 fast_obs = build_policy_obs(
                     fast_policy,
                     obs_group,
-                    int(gt_idx),
+                    int(input_gt_idx),
                     device,
                     base_action_rel=this_fast_rel,
                     n_obs_steps_override=1,
@@ -802,11 +832,11 @@ def predict_windows(
 
         fast_abs = np.asarray([
             apply_residual_action_to_pose9(this_slow_abs, this_residual)
-            for this_slow_abs, this_residual in zip(slow_abs, residual)
+            for this_slow_abs, this_residual in zip(target_slow_abs, residual)
         ], dtype=np.float32)
 
-        gt_actual = pose_like_to_pose9(np.asarray(obs_group["actual_target_abs"])[gt_indices])
-        gt_virtual = pose_like_to_pose9(np.asarray(obs_group["virtual_target_abs"])[gt_indices])
+        gt_actual = pose_like_to_pose9(np.asarray(obs_group["actual_target_abs"])[target_gt_indices])
+        gt_virtual = pose_like_to_pose9(np.asarray(obs_group["virtual_target_abs"])[target_gt_indices])
         resolved_virtual_scale = resolve_virtual_position_scale(
             virtual_position_scale,
             gt_actual,
@@ -815,15 +845,16 @@ def predict_windows(
         gt_virtual_plot = scale_pose_position(gt_virtual, resolved_virtual_scale)
         fast_abs_plot = scale_pose_position(fast_abs, resolved_virtual_scale)
 
-        slow_err = pose_errors(slow_abs, gt_actual)
+        slow_err = pose_errors(target_slow_abs, gt_actual)
         fast_err = pose_errors(fast_abs_plot, gt_virtual_plot)
         out.append({
             "anchor": anchor,
-            "gt_indices": gt_indices,
+            "input_indices": input_gt_indices,
+            "gt_indices": target_gt_indices,
             "gt_actual": gt_actual,
             "gt_virtual": gt_virtual,
             "gt_virtual_plot": gt_virtual_plot,
-            "slow_pred_actual": slow_abs,
+            "slow_pred_actual": target_slow_abs,
             "fast_pred_virtual": fast_abs,
             "fast_pred_virtual_plot": fast_abs_plot,
             "residual_pred": residual,
@@ -846,13 +877,20 @@ def predict_chunked_receding(
         start,
         total_steps,
         exec_steps,
-        virtual_position_scale):
+        virtual_position_scale,
+        fast_action_target_shift):
     obs_group = demo_group["obs"]
     length = len(demo_group["actions"])
     n_obs_steps = int(getattr(slow_policy, "n_obs_steps", 1))
     raw_start = max(0, n_obs_steps - 1)
+    fast_action_target_shift = int(fast_action_target_shift)
+    if total_steps is None or int(total_steps) <= 0:
+        total_steps = max(0, length - start - fast_action_target_shift)
+    else:
+        total_steps = int(total_steps)
 
     gt_indices = []
+    input_indices = []
     chunk_ids = []
     step_ids = []
     slow_pred = []
@@ -867,8 +905,15 @@ def predict_chunked_receding(
         slow_obs = build_policy_obs(slow_policy, obs_group, int(anchor), device)
         slow_result = slow_policy.predict_action(slow_obs)
         raw_actions = slow_result["action_pred"][0].detach().cpu().numpy()
-        action_chunk = raw_actions[raw_start:raw_start + exec_steps]
-        max_available = min(len(action_chunk), length - anchor, start + total_steps - anchor)
+        action_chunk = raw_actions[
+            raw_start + fast_action_target_shift:
+            raw_start + fast_action_target_shift + exec_steps
+        ]
+        max_available = max(0, min(
+            len(action_chunk),
+            length - anchor - fast_action_target_shift,
+            start + total_steps - anchor,
+        ))
         action_chunk = action_chunk[:max_available]
         if len(action_chunk) == 0:
             continue
@@ -886,20 +931,23 @@ def predict_chunked_receding(
         chunk_slow_rel = []
         fast_obs_list = []
         for local_i, this_slow_abs in enumerate(chunk_slow_abs):
-            gt_idx = int(anchor + local_i)
-            fast_current_pose9 = current_pose9_for_step(obs_group, gt_idx, arm)
+            input_gt_idx = int(anchor + local_i)
+            fast_current_pose9 = current_pose9_for_step(obs_group, input_gt_idx, arm)
             this_slow_rel = abs_pose9_to_relative_pose9(fast_current_pose9, this_slow_abs)
             chunk_slow_rel.append(this_slow_rel)
             fast_obs_list.append(build_policy_obs(
                 fast_policy,
                 obs_group,
-                gt_idx,
+                input_gt_idx,
                 device,
                 base_action_rel=this_slow_rel,
             ))
 
         if getattr(fast_policy, "uses_fixed_context_sequence", False):
-            step_indices = np.asarray([int(anchor + local_i) for local_i in range(len(chunk_slow_rel))], dtype=np.int64)
+            step_indices = np.asarray(
+                [int(anchor + local_i) for local_i in range(len(chunk_slow_rel))],
+                dtype=np.int64,
+            )
             fast_obs = build_context_sequence_obs(
                 fast_policy,
                 obs_group,
@@ -914,11 +962,11 @@ def predict_chunked_receding(
             chunk_residual = []
             temporal_hidden = None
             for local_i, this_slow_rel in enumerate(chunk_slow_rel):
-                gt_idx = int(anchor + local_i)
+                input_gt_idx = int(anchor + local_i)
                 fast_obs = build_policy_obs(
                     fast_policy,
                     obs_group,
-                    gt_idx,
+                    input_gt_idx,
                     device,
                     base_action_rel=this_slow_rel,
                     n_obs_steps_override=1,
@@ -938,7 +986,9 @@ def predict_chunked_receding(
 
         for local_i, (this_slow_abs, this_slow_rel, this_fast_abs, this_residual) in enumerate(
                 zip(chunk_slow_abs, chunk_slow_rel, chunk_fast_abs, chunk_residual)):
-            gt_idx = int(anchor + local_i)
+            input_gt_idx = int(anchor + local_i)
+            gt_idx = int(anchor + fast_action_target_shift + local_i)
+            input_indices.append(input_gt_idx)
             gt_indices.append(gt_idx)
             chunk_ids.append(chunk_id)
             step_ids.append(local_i)
@@ -948,6 +998,7 @@ def predict_chunked_receding(
             base_action_rel.append(this_slow_rel)
 
     gt_indices = np.asarray(gt_indices, dtype=np.int64)
+    input_indices = np.asarray(input_indices, dtype=np.int64)
     chunk_ids = np.asarray(chunk_ids, dtype=np.int64)
     step_ids = np.asarray(step_ids, dtype=np.int64)
     slow_pred = np.asarray(slow_pred, dtype=np.float32)
@@ -974,6 +1025,7 @@ def predict_chunked_receding(
         "total_steps": int(total_steps),
         "exec_steps": int(exec_steps),
         "raw_action_start_index": int(raw_start),
+        "fast_action_target_shift": int(fast_action_target_shift),
         "num_points": int(len(gt_indices)),
         "virtual_position_scale": float(resolved_virtual_scale),
         "slow_vs_gt_actual": summarize_errors(*slow_err),
@@ -986,6 +1038,7 @@ def predict_chunked_receding(
     }
 
     return {
+        "input_indices": input_indices,
         "gt_indices": gt_indices,
         "chunk_ids": chunk_ids,
         "step_ids": step_ids,
@@ -1052,6 +1105,12 @@ def main():
     parser.add_argument("--chunk-total-steps", type=int, default=80)
     parser.add_argument("--chunk-exec-steps", type=int, default=8)
     parser.add_argument(
+        "--fast-action-target-shift",
+        type=int,
+        default=None,
+        help="Fast residual target shift. Defaults to task.dataset.action_target_shift from the fast checkpoint.",
+    )
+    parser.add_argument(
         "--organized-output",
         action="store_true",
         default=False,
@@ -1074,7 +1133,8 @@ def main():
     if args.organized_output:
         continuous_dir = output_dir / "continuous"
         window_dir = output_dir / "window16"
-        chunked_dir = output_dir / f"chunked{args.chunk_total_steps}"
+        chunked_suffix = "all" if args.chunk_total_steps <= 0 else str(args.chunk_total_steps)
+        chunked_dir = output_dir / f"chunked_{chunked_suffix}"
         if args.continuous_plots:
             continuous_dir.mkdir(parents=True, exist_ok=True)
         if args.window_plots:
@@ -1090,7 +1150,7 @@ def main():
     frame_label = "world frame" if args.world_frame else "dataset robot frame"
 
     slow_cfg, slow_policy = load_policy_from_ckpt(args.slow_ckpt, device=device, use_ema=args.slow_use_ema)
-    _, fast_policy = load_policy_from_ckpt(args.fast_ckpt, device=device, use_ema=args.fast_use_ema)
+    fast_cfg, fast_policy = load_policy_from_ckpt(args.fast_ckpt, device=device, use_ema=args.fast_use_ema)
 
     slow_action_pose_repr = OmegaConf.select(
         slow_cfg,
@@ -1098,6 +1158,17 @@ def main():
         default="relative",
     )
     print(f"slow action_pose_repr: {slow_action_pose_repr}")
+    fast_action_target_shift = args.fast_action_target_shift
+    if fast_action_target_shift is None:
+        fast_action_target_shift = OmegaConf.select(
+            fast_cfg,
+            "task.dataset.action_target_shift",
+            default=0,
+        )
+    fast_action_target_shift = int(fast_action_target_shift)
+    if fast_action_target_shift < 0:
+        raise ValueError(f"fast_action_target_shift must be >= 0, got {fast_action_target_shift}")
+    print(f"fast action_target_shift: {fast_action_target_shift}")
 
     all_metrics = {}
     with h5py.File(args.dataset, "r") as f:
@@ -1125,6 +1196,7 @@ def main():
                     max_steps=args.max_steps,
                     batch_size=args.batch_size,
                     virtual_position_scale=args.virtual_position_scale,
+                    fast_action_target_shift=fast_action_target_shift,
                 )
                 html_path = continuous_dir / f"{slug}_continuous_gt_slow_fast_3d.html"
                 png_path = continuous_dir / f"{slug}_continuous_prediction_errors.png"
@@ -1147,6 +1219,7 @@ def main():
                     np.savez_compressed(
                         continuous_dir / f"{slug}_continuous.npz",
                         indices=result["indices"],
+                        target_indices=result["target_indices"],
                         gt_actual=result["gt_actual"],
                         gt_virtual=result["gt_virtual"],
                         gt_virtual_plot=result["gt_virtual_plot"],
@@ -1175,6 +1248,7 @@ def main():
                     slow_action_pose_repr=slow_action_pose_repr,
                     anchors=anchors,
                     virtual_position_scale=args.virtual_position_scale,
+                    fast_action_target_shift=fast_action_target_shift,
                 )
                 window_metrics = {}
                 for window in windows:
@@ -1203,6 +1277,7 @@ def main():
                         np.savez_compressed(
                             window_dir / f"{slug}_w{anchor:04d}.npz",
                             gt_indices=window["gt_indices"],
+                            input_indices=window["input_indices"],
                             gt_actual=window["gt_actual"],
                             gt_virtual=window["gt_virtual"],
                             gt_virtual_plot=window["gt_virtual_plot"],
@@ -1242,6 +1317,7 @@ def main():
                         total_steps=args.chunk_total_steps,
                         exec_steps=args.chunk_exec_steps,
                         virtual_position_scale=args.virtual_position_scale,
+                        fast_action_target_shift=fast_action_target_shift,
                     )
                     prefix = f"{slug}_c{chunk_start:04d}"
                     chunked_path = chunked_dir / f"{prefix}.html"
@@ -1262,6 +1338,7 @@ def main():
                         np.savez_compressed(
                             chunked_dir / f"{prefix}.npz",
                             gt_indices=chunked["gt_indices"],
+                            input_indices=chunked["input_indices"],
                             chunk_ids=chunked["chunk_ids"],
                             step_ids=chunked["step_ids"],
                             gt_actual=chunked["gt_actual"],

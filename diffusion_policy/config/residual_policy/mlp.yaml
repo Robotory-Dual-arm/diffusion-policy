@@ -1,6 +1,6 @@
 # @package _global_
 defaults:
-  - /residual_policy/task: nfslow_actual
+  - /residual_policy/task: no_force
   - _self_
 
 name: mlp
@@ -8,29 +8,37 @@ _target_: diffusion_policy.residual_policy.workspace.TrainFastResidualWorkspace
 
 task_name: ${task.name}
 shape_meta: ${task.shape_meta}
-exp_name: "nfslow_actual"
+exp_name: ${task.name}
 
 horizon: 1
-n_obs_steps: 1
+n_obs_steps: 16
 n_action_steps: 1
 dataset_obs_steps: ${n_obs_steps}
 
 slow_ckpt_path: ${task.slow_ckpt_path}
 
+task:
+  dataset:
+    _target_: diffusion_policy.residual_policy.step_dataset.FastResidualContextStepDataset
+    temporal_lowdim_keys: all
+
 policy:
-  _target_: diffusion_policy.residual_policy.step_policy.FastResidualStepPolicy
+  _target_: diffusion_policy.residual_policy.mlp_policy.FastResidualMLPPolicy
   shape_meta: ${shape_meta}
   slow_ckpt_path: ${slow_ckpt_path}
   slow_use_ema: True
   base_action_key: ${task.dataset.base_action_key}
+  n_obs_steps: ${n_obs_steps}
   hidden_dims: [512, 512, 256]
   dropout: 0.0
   freeze_vision_encoder: True
-  freeze_force_encoder: False
-  train_force_encoder: True
-  force_encoder_cfg:
-    model_name: causalconv
-    feature_dim: 512
+  freeze_force_encoder: ${task.fast_force_encoder.freeze_force_encoder}
+  train_force_encoder: ${task.fast_force_encoder.train_force_encoder}
+  include_initial_low_dim: False
+  include_initial_wrench: False
+  include_step_low_dim: True
+  step_encoding: sin_cos
+  force_encoder_cfg: ${task.fast_force_encoder.force_encoder_cfg}
 
 ema:
   _target_: diffusion_policy.model.diffusion.ema_model.EMAModel
@@ -97,14 +105,14 @@ checkpoint:
   save_last_snapshot: False
 
 multi_run:
-  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+  run_dir: data/outputs/residual_policy/fast/${task.name}_${name}/${now:%Y%m%d_%H%M%S}
   wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
 
 hydra:
   job:
     override_dirname: ${name}
   run:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+    dir: data/outputs/residual_policy/fast/${task.name}_${name}/${now:%Y%m%d_%H%M%S}
   sweep:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+    dir: data/outputs/residual_policy/fast/${task.name}_${name}/${now:%Y%m%d_%H%M%S}
     subdir: ${hydra.job.num}

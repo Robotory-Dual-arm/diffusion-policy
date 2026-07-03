@@ -1,179 +1,261 @@
 # Residual Policy Notes
 
-This folder keeps the CR-Dagger-style slow/fast residual experiments separate
-from the original single diffusion policy code.
+The active residual setup is intentionally limited to:
 
-## Slow Policy
-
-The slow policy is the existing diffusion policy trained in the usual way. It
-predicts the slow/base action trajectory. The residual policies load this
-checkpoint and keep it frozen.
-
-Typical checkpoint:
-
-```bash
-data/outputs/2026.06.18/slow/slow.ckpt
+```text
+slow: force, no_force
+fast: mlp, gru
+total: 4 training runs
 ```
 
-## Fast Residual Variants
+Legacy `mlp_seq`, `gru_seq`, `*_slow`, pose9, image residual, slow-pred fast
+dataset, and one-step policy files were removed from the active tree to keep
+new training unambiguous.
 
-Main no-force-slow train configs:
+Active code entry points:
 
 ```text
 diffusion_policy/config/residual_policy/mlp.yaml
-diffusion_policy/config/residual_policy/mlp_seq.yaml
 diffusion_policy/config/residual_policy/gru.yaml
-diffusion_policy/config/residual_policy/gru_seq.yaml
-```
-
-Older force-slow / legacy train configs:
-
-```text
-diffusion_policy/config/residual_policy/mlp_slow.yaml
-diffusion_policy/config/residual_policy/mlp_seq_slow.yaml
-diffusion_policy/config/residual_policy/gru_slow.yaml
-diffusion_policy/config/residual_policy/image.yaml
-```
-
-Current task configs:
-
-```text
-diffusion_policy/config/residual_policy/task/nfslow_actual.yaml
-diffusion_policy/config/residual_policy/task/nfslow_pred.yaml
-diffusion_policy/config/residual_policy/task/slow_actual.yaml
-diffusion_policy/config/residual_policy/task/slow_pred.yaml
-diffusion_policy/config/residual_policy/task/slow_actual_pose9.yaml
-diffusion_policy/config/residual_policy/task/image.yaml
-```
-
-Naming:
-
-```text
-mlp       = one-step MLP fast policy, default no-force slow
-mlp_seq   = context-step MLP fast policy, default no-force slow
-gru       = temporal GRU fast policy, default no-force slow
-gru_seq   = temporal GRU fast policy with fixed slow context, default no-force slow
-*_slow    = same structure but using the older force slow-policy task config
-```
-
-### One-step MLP
-
-Config:
-
-```bash
-diffusion_policy/config/residual_policy/mlp.yaml
-```
-
-Policy:
-
-```bash
-diffusion_policy/residual_policy/step_policy.py
-```
-
-Input per fast step:
-
-```text
-current image/proprio/wrench + current slow/base action -> residual_delta6
-```
-
-### Temporal GRU
-
-Config:
-
-```bash
-diffusion_policy/config/residual_policy/gru.yaml
-```
-
-Policy:
-
-```bash
-diffusion_policy/residual_policy/temporal_step_policy.py
-```
-
-Input per slow chunk:
-
-```text
-h0 from first image/proprio/wrench
-then each recurrent step gets current wrench + current slow/base action
-```
-
-The GRU hidden state resets whenever the slow policy is re-run.
-
-### Context-step MLP
-
-Config:
-
-```bash
-diffusion_policy/config/residual_policy/mlp_seq.yaml
-```
-
-Policy:
-
-```bash
-diffusion_policy/residual_policy/context_step_policy.py
-```
-
-Dataset:
-
-```bash
+diffusion_policy/config/residual_policy/task/force.yaml
+diffusion_policy/config/residual_policy/task/no_force.yaml
 diffusion_policy/residual_policy/step_dataset.py::FastResidualContextStepDataset
+diffusion_policy/residual_policy/mlp_policy.py::FastResidualMLPPolicy
+diffusion_policy/residual_policy/temporal_step_policy.py::FastResidualTemporalPolicy
 ```
 
-Input per slow chunk:
+## Slow Checkpoints
+
+The slow checkpoints are exposed through stable residual-policy paths:
 
 ```text
-fixed context: first image + first proprio
-per-step input: wrench[t] + slow/base_action[t]
-output: residual_delta6[t]
+data/outputs/residual_policy/slow/force/slow_force.ckpt
+data/outputs/residual_policy/slow/no_force/slow_no_force.ckpt
 ```
 
-This variant learns all 16 residual steps without a recurrent hidden state. The
-context dataset intentionally loads only one image/proprio frame per sample, so
-batch size 64 remains practical.
+These are the slow checkpoints used by the active fast training configs.
 
-## Common Training Commands
+## Fast Training Data
 
-Actual-to-virtual residual target:
-
-```bash
-HYDRA_FULL_ERROR=1 python train.py \
-  --config-name=residual_policy/mlp_seq \
-  task.dataset_path=data/baetae/260618/slow_erase_board_virtual_m.hdf5 \
-  task.slow_ckpt_path=data/outputs/2026.06.18/slow/slow.ckpt
-```
-
-Slow-predicted residual target:
-
-```bash
-HYDRA_FULL_ERROR=1 python train.py \
-  --config-name=residual_policy/mlp_seq \
-  residual_policy/task=slow_pred
-```
-
-No-force slow 4-way run names:
-
-```bash
-HYDRA_FULL_ERROR=1 python train.py --config-name=residual_policy/mlp
-HYDRA_FULL_ERROR=1 python train.py --config-name=residual_policy/mlp_seq
-HYDRA_FULL_ERROR=1 python train.py --config-name=residual_policy/gru
-HYDRA_FULL_ERROR=1 python train.py --config-name=residual_policy/gru_seq
-```
-
-## Visualization
-
-Script:
-
-```bash
-python -m diffusion_policy.residual_policy.test.visualize_step_residual_predictions
-```
-
-Useful output layout:
+Both active task configs train on the same actual-base residual dataset:
 
 ```text
-plots/rotvec_eval/<model_name>/window16
-plots/rotvec_eval/<model_name>/chunked80
-plots/rotvec_eval/<model_name>/world_frame
+data/outputs/residual_policy/data/fast/actual_base_residual.hdf5
 ```
 
-`--world-frame` applies the same right-arm robot-base to world-frame rotation
-used by the older plotting scripts.
+For `common_data_height.hdf5`, rebuild this dataset through:
+
+```bash
+./scripts/rebuild_corrected_residual_and_train_fast4.sh
+```
+
+Important conversion detail:
+
+```text
+raw observations/desired_pose:
+  xyz: mm
+  rotation: Euler ZYX degrees
+converted obs/virtual_target_abs:
+  xyz: meters
+  rotation: pose9 rotation_6d
+```
+
+Do not convert `desired_pose[:, 3:6]` as a rotvec in radians. The rebuild script
+uses `--virtual-rotation-format euler_ZYX_deg`, then validates that
+`actual->virtual` residual rotations stay in a normal range and that
+`virtual_target_abs` matches `data/baetae/260602/diffusion_data.hdf5/actions`.
+
+The base and target are:
+
+```text
+base target: obs/actual_target_abs shifted by 1, converted to rel from current pose
+target:      obs/residual_delta6_gt_actual_to_virtual shifted by 1
+shift:       action_target_shift = base_action_target_shift = 1
+```
+
+For training only, the dataset's actual action is used as a proxy for the slow
+base action. In other words, fast learns a one-step-ahead residual:
+
+```text
+input at t:  obs_t, actual_action_{t+1} expressed relative to pose_t
+target:      residual_delta6_{t+1}
+```
+
+At inference, that same learned correction is applied on top of the slow
+policy's next predicted action.
+
+## Action Representation
+
+Slow policy output is relative pose9. For a slow chunk at anchor time `t`, the
+slow policy predicts:
+
+```text
+a_t, a_{t+1}, ..., a_{t+15}
+```
+
+Each slow relative action is converted to an absolute target using the robot
+pose at the slow anchor `t`:
+
+```text
+slow_abs_{t+k} = current_pose_abs_t @ slow_rel_{t+k}
+```
+
+Before feeding fast at real fast step `t+k`, the slow target that will receive
+the residual is converted to a relative base action from the current pose at
+`t+k`:
+
+```text
+base_rel_{t+k+1} = inv(current_pose_abs_{t+k}) @ slow_abs_{t+k+1}
+```
+
+The fast policy is trained to predict `residual_delta6_gt_actual_to_virtual`;
+at inference we interpret that output as the same kind of correction, but
+applied to the slow action:
+
+```text
+training target: delta6_train_{t+k+1} = inv(actual_action_abs_{t+k+1}) @ virtual_target_abs_{t+k+1}
+inference pred:  delta6_pred_{t+k+1}  ~= correction from slow_abs_{t+k+1} to desired fast_abs_{t+k+1}
+```
+
+At inference:
+
+```text
+fast_abs_{t+k+1} = slow_abs_{t+k+1} @ predicted_delta6_{t+k+1}
+```
+
+## Slow/Fast Timing
+
+Clean receding-horizon timing should be interpreted as:
+
+```text
+observe latest state at t
+run slow once on obs_t
+slow outputs nominal actions: a_t, a_{t+1}, ..., a_{t+15}
+```
+
+The first returned action `a_t` is usually already too close to the current
+time by the time slow inference finishes. Treat it as stale for execution, but
+do not erase it from the fast policy's time alignment:
+
+```text
+do not execute a_t
+MLP: feed current obs plus base action a_{t+1}; this output corrects a_{t+1}
+GRU: run step 0 with base action a_{t+1} to advance hidden and correct a_{t+1}
+execute candidates a_{t+1}, a_{t+2}, ...
+```
+
+The real-robot residual eval script now defaults to this behavior with:
+
+```text
+--slow_action_start_offset 1
+```
+
+The eval loop binds every slow action index to a timestamp from the slow anchor:
+
+```text
+timestamp(a_{t+k}) = slow_anchor_timestamp + k * dt
+```
+
+For each fast loop:
+
+```text
+1. read the latest available obs; for input step 0, reuse the slow anchor obs_t
+2. choose the earliest future timestamp that can still be commanded
+3. select the matching target slow step k for that timestamp
+4. feed fast with latest obs from step k-1 and base action a_k relative to pose_{k-1}
+5. predict delta_k before timestamp(a_k)
+6. schedule fast_abs_k = slow_abs_k @ predicted_delta6_k
+```
+
+If a residual prediction finishes too late for its chosen timestamp, that output
+is not executed. The fast state is already advanced through its input step, so
+the loop immediately tries the next slow target.
+
+After a small accepted prefix, for example 6 or 8 fast ticks, re-observe and
+run slow again. The unused tail of the old slow chunk is dropped.
+
+## MLP
+
+Config:
+
+```text
+diffusion_policy/config/residual_policy/mlp.yaml
+```
+
+Policy:
+
+```text
+diffusion_policy/residual_policy/mlp_policy.py::FastResidualMLPPolicy
+```
+
+The MLP is a non-recurrent sequence model. It uses one fixed slow-context image
+for the whole 16-step chunk, but per-step current low-dim, force, slow action,
+and step encoding:
+
+```text
+fixed:    image0[t]
+per step: robot_pose_R[t+k], robot_quat_R[t+k],
+          wrench_wrist_R[t+k], base_rel_for_target[t+k+1], step_encoding(k)
+output:   residual_delta6[t+k+1]
+```
+
+Force handling:
+
+```text
+force slow:    reuse frozen slow force encoder
+no_force slow: train a new causalconv force encoder inside fast
+```
+
+## GRU
+
+Config:
+
+```text
+diffusion_policy/config/residual_policy/gru.yaml
+```
+
+The GRU initializes hidden state from the slow-context observation, then rolls
+forward one fast step at a time:
+
+```text
+h0:       image0[t], robot_pose_R[t], robot_quat_R[t]
+per step: wrench_wrist_R[t+k], base_rel_for_target[t+k+1]
+output:   residual_delta6[t+k+1]
+```
+
+`include_initial_wrench` is set to `False`; force enters through the recurrent
+step input.
+
+## Training Commands
+
+```bash
+HYDRA_FULL_ERROR=1 python train.py --config-name=residual_policy/mlp residual_policy/task=force
+HYDRA_FULL_ERROR=1 python train.py --config-name=residual_policy/gru residual_policy/task=force
+HYDRA_FULL_ERROR=1 python train.py --config-name=residual_policy/mlp residual_policy/task=no_force
+HYDRA_FULL_ERROR=1 python train.py --config-name=residual_policy/gru residual_policy/task=no_force
+```
+
+Outputs go under:
+
+```text
+data/outputs/residual_policy/fast/<task>_<fast>/<timestamp>/
+```
+
+The batch runner for all four active trainings plus world-frame visualization is:
+
+```bash
+./scripts/train_residual_fast4_and_visualize.sh
+```
+
+## Window Sampling
+
+Training uses 16-step overlapping windows with stride 1:
+
+```text
+t     ... t+15
+t+1   ... t+16
+t+2   ... t+17
+```
+
+At episode starts the sampler still pads the missing previous frames because
+`pad_before = n_obs_steps - 1`.

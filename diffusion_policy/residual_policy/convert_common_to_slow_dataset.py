@@ -24,6 +24,7 @@ from scipy.spatial.transform import Rotation
 from diffusion_policy.residual_policy.pose_util import (
     abs_pose9_to_relative_pose9,
     delta6_from_base_to_target,
+    mat_to_pose9,
     pose_like_to_pose9,
 )
 
@@ -106,6 +107,40 @@ def sorted_demo_indices(data_group):
         if key.startswith("demo_"):
             out.append(int(key.split("_")[-1]))
     return sorted(out)
+
+
+def virtual_pose_to_pose9(pose, rotation_format):
+    pose = np.asarray(pose, dtype=np.float32)
+    if pose.shape[-1] >= 9:
+        return pose[..., :9].astype(np.float32)
+    if pose.shape[-1] != 6:
+        raise ValueError(f"Expected virtual pose with 6 or >=9 dims, got {pose.shape}")
+
+    if rotation_format == "rotvec_rad":
+        return pose_like_to_pose9(pose).astype(np.float32)
+
+    pos = pose[..., :3]
+    rot_data = pose[..., 3:6]
+    flat_rot_data = rot_data.reshape(-1, 3)
+
+    if rotation_format == "rotvec_deg":
+        rot = Rotation.from_rotvec(np.deg2rad(flat_rot_data))
+    elif rotation_format == "euler_ZYX_deg":
+        rot = Rotation.from_euler("ZYX", flat_rot_data, degrees=True)
+    elif rotation_format == "euler_zyx_deg":
+        rot = Rotation.from_euler("zyx", flat_rot_data, degrees=True)
+    elif rotation_format == "euler_XYZ_deg":
+        rot = Rotation.from_euler("XYZ", flat_rot_data, degrees=True)
+    elif rotation_format == "euler_xyz_deg":
+        rot = Rotation.from_euler("xyz", flat_rot_data, degrees=True)
+    else:
+        raise ValueError(f"Unknown virtual rotation format: {rotation_format}")
+
+    mat = np.zeros(pos.shape[:-1] + (4, 4), dtype=np.float32)
+    mat[..., :3, 3] = pos
+    mat[..., :3, :3] = rot.as_matrix().astype(np.float32).reshape(pos.shape[:-1] + (3, 3))
+    mat[..., 3, 3] = 1.0
+    return mat_to_pose9(mat).astype(np.float32)
 
 
 def convert_one_demo(
@@ -191,7 +226,10 @@ def convert_one_demo(
     hand_pose_r = input_hand_r[:, [0, 1, 2, 4, 5, 7, 8, 10, 11, 13, 14]].astype(np.float32)
 
     actual_pose9 = np.hstack([tcp_pose_r, quat_to_6d(tcp_quat_r)]).astype(np.float32)
-    virtual_pose9 = pose_like_to_pose9(input_desired_pose).astype(np.float32)
+    virtual_pose9 = virtual_pose_to_pose9(
+        input_desired_pose,
+        args.virtual_rotation_format,
+    ).astype(np.float32)
     actual_action_rel = abs_pose9_to_relative_pose9(
         actual_pose9[:-1],
         actual_pose9[1:],
@@ -241,6 +279,22 @@ def main():
     parser.add_argument("--hand-key", default="hand_R")
     parser.add_argument("--virtual-key", default="desired_pose")
     parser.add_argument(
+        "--virtual-rotation-format",
+        default="rotvec_rad",
+        choices=[
+            "rotvec_rad",
+            "rotvec_deg",
+            "euler_ZYX_deg",
+            "euler_zyx_deg",
+            "euler_XYZ_deg",
+            "euler_xyz_deg",
+        ],
+        help=(
+            "Rotation representation for a 6D virtual target. "
+            "common_data_height.hdf5 desired_pose uses euler_ZYX_deg."
+        ),
+    )
+    parser.add_argument(
         "--virtual-position-scale",
         type=float,
         default=0.001,
@@ -257,6 +311,7 @@ def main():
     parser.add_argument("--wrench-history-len", type=int, default=32)
     parser.add_argument("--wrench-offset-mean-number", type=int, default=10)
     parser.add_argument("--wrench-ema-alpha", type=float, default=0.03)
+    parser.add_argument("--max-demos", type=int, default=None)
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
@@ -277,6 +332,10 @@ def main():
 
     output_demo_idx = 0
     with h5py.File(output_path, "w") as output_file:
+        output_file.attrs["virtual_key"] = args.virtual_key
+        output_file.attrs["virtual_position_scale"] = args.virtual_position_scale
+        output_file.attrs["virtual_rotation_format"] = args.virtual_rotation_format
+        output_file.attrs["robot_downsample"] = args.robot_downsample
         output_data = output_file.create_group("data")
         output_file.attrs["actions"] = "next_actual_pose9"
         output_file.attrs["obs/virtual_target_abs"] = "next_virtual_target_pose9"
@@ -286,8 +345,6 @@ def main():
         output_file.attrs["obs/actual_action_rel"] = (
             "relative_next_actual_pose9_from_current_actual_pose9"
         )
-        output_file.attrs["virtual_position_scale"] = args.virtual_position_scale
-
         for input_name in args.input:
             input_path = pathlib.Path(input_name).expanduser()
             if not input_path.is_absolute():
@@ -295,6 +352,11 @@ def main():
             with h5py.File(input_path, "r") as input_file:
                 input_data = cast(h5py.Group, input_file["data"])
                 demo_indices = sorted_demo_indices(input_data)
+                if args.max_demos is not None:
+                    remaining = args.max_demos - output_demo_idx
+                    if remaining <= 0:
+                        break
+                    demo_indices = demo_indices[:remaining]
                 print(input_path, "/ demo_len =", len(demo_indices))
 
                 for demo_idx in tqdm.tqdm(demo_indices, desc="Converting common demos"):

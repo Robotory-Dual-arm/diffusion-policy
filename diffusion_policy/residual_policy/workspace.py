@@ -26,11 +26,16 @@ from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
 from diffusion_policy.model.common.lr_scheduler import get_scheduler
 from diffusion_policy.model.diffusion.ema_model import EMAModel
-from diffusion_policy.residual_policy.policy import FastResidualImagePolicy
+from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
+
+
+class _NoOpWandbRun:
+    def log(self, *args, **kwargs):
+        pass
 
 
 class TrainFastResidualWorkspace(BaseWorkspace):
@@ -44,8 +49,8 @@ class TrainFastResidualWorkspace(BaseWorkspace):
         np.random.seed(seed)
         random.seed(seed)
 
-        self.model: FastResidualImagePolicy = hydra.utils.instantiate(cfg.policy)
-        self.ema_model: FastResidualImagePolicy = None
+        self.model: BaseImagePolicy = hydra.utils.instantiate(cfg.policy)
+        self.ema_model: BaseImagePolicy = None
         if cfg.training.use_ema:
             self.ema_model = copy.deepcopy(self.model)
 
@@ -89,12 +94,15 @@ class TrainFastResidualWorkspace(BaseWorkspace):
         if self.ema_model is not None:
             ema = hydra.utils.instantiate(cfg.ema, model=self.ema_model)
 
-        wandb_run = wandb.init(
-            dir=str(self.output_dir),
-            config=OmegaConf.to_container(cfg, resolve=True),
-            **cfg.logging,
-        )
-        wandb.config.update({"output_dir": self.output_dir})
+        if str(cfg.logging.mode).lower() == "disabled":
+            wandb_run = _NoOpWandbRun()
+        else:
+            wandb_run = wandb.init(
+                dir=str(self.output_dir),
+                config=OmegaConf.to_container(cfg, resolve=True),
+                **cfg.logging,
+            )
+            wandb.config.update({"output_dir": self.output_dir})
 
         topk_manager = TopKCheckpointManager(
             save_dir=os.path.join(self.output_dir, "checkpoints"),
@@ -220,11 +228,14 @@ class TrainFastResidualWorkspace(BaseWorkspace):
                 self.global_step += 1
                 self.epoch += 1
 
+        if cfg.checkpoint.save_last_ckpt:
+            self.save_checkpoint()
+
 
 @hydra.main(
     version_base=None,
     config_path=str(pathlib.Path(__file__).parent.parent.joinpath("config")),
-    config_name="residual_policy/image",
+    config_name="residual_policy/mlp",
 )
 def main(cfg):
     workspace = TrainFastResidualWorkspace(cfg)
