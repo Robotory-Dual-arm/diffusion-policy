@@ -31,6 +31,30 @@ from diffusion_policy.model.common.lr_scheduler import get_scheduler
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
+
+def _unpack_loss_output(loss_output):
+    if torch.is_tensor(loss_output):
+        return loss_output, {}
+    if not isinstance(loss_output, dict) or 'loss' not in loss_output:
+        raise TypeError(
+            "compute_loss must return a tensor or a dict containing 'loss'")
+
+    loss = loss_output['loss']
+    if not torch.is_tensor(loss):
+        raise TypeError("compute_loss output['loss'] must be a tensor")
+
+    metrics = {}
+    for key, value in loss_output.items():
+        if key == 'loss':
+            continue
+        if torch.is_tensor(value):
+            value = value.detach().mean().item()
+        else:
+            value = float(value)
+        metrics[key] = value
+    return loss, metrics
+
+
 class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
     include_keys = ['global_step', 'epoch']
 
@@ -161,6 +185,7 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                 step_log = dict()
                 # ========= train for this epoch ==========
                 train_losses = list()
+                train_metric_values = dict()
                 with tqdm.tqdm(train_dataloader, desc=f"Training epoch {self.epoch}", 
                         leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                     
@@ -171,7 +196,8 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                             train_sampling_batch = batch
                         
                         # compute loss
-                        raw_loss = self.model.compute_loss(batch)
+                        loss_output = self.model.compute_loss(batch)
+                        raw_loss, loss_metrics = _unpack_loss_output(loss_output)
                         if not torch.isfinite(raw_loss).all():
                             raise FloatingPointError(
                                 f"Non-finite train loss at epoch {self.epoch}, "
@@ -201,6 +227,10 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                             'epoch': self.epoch,
                             'lr': lr_scheduler.get_last_lr()[0]
                         }
+                        for key, value in loss_metrics.items():
+                            metric_key = f'train_{key}'
+                            step_log[metric_key] = value
+                            train_metric_values.setdefault(metric_key, []).append(value)
 
                         is_last_batch = (batch_idx == (len(train_dataloader)-1))
                         if not is_last_batch:
@@ -217,11 +247,14 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                 # replace train_loss with epoch average
                 train_loss = np.mean(train_losses)
                 step_log['train_loss'] = train_loss
+                for key, values in train_metric_values.items():
+                    step_log[key] = float(np.mean(values))
 
                 # ========= eval for this epoch ==========
                 policy = self.model
                 if cfg.training.use_ema:
                     policy = self.ema_model
+                self.model.eval()
                 policy.eval()
 
                 # run rollout
@@ -234,11 +267,13 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                 if (self.epoch % cfg.training.val_every) == 0:
                     with torch.no_grad():
                         val_losses = list()
+                        val_metric_values = dict()
                         with tqdm.tqdm(val_dataloader, desc=f"Validation epoch {self.epoch}", 
                                 leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                             for batch_idx, batch in enumerate(tepoch):
                                 batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
-                                loss = self.model.compute_loss(batch)
+                                loss_output = self.model.compute_loss(batch)
+                                loss, loss_metrics = _unpack_loss_output(loss_output)
                                 if not torch.isfinite(loss).all():
                                     raise FloatingPointError(
                                         f"Non-finite validation loss at epoch {self.epoch}, "
@@ -247,6 +282,9 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                                     )
                                 
                                 val_losses.append(loss.item())
+                                for key, value in loss_metrics.items():
+                                    metric_key = f'val_{key}'
+                                    val_metric_values.setdefault(metric_key, []).append(value)
 
                                 if (cfg.training.max_val_steps is not None) \
                                     and batch_idx >= (cfg.training.max_val_steps-1):
@@ -257,6 +295,8 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
 
                             # log epoch average validation loss
                             step_log['val_loss'] = val_loss
+                            for key, values in val_metric_values.items():
+                                step_log[key] = float(np.mean(values))
 
                 # run diffusion sampling on a training batch
                 if (self.epoch % cfg.training.sample_every) == 0:
@@ -304,7 +344,7 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                     if topk_ckpt_path is not None:
                         self.save_checkpoint(path=topk_ckpt_path)
                 # ========= eval end for this epoch ==========
-                policy.train()
+                self.model.train()
 
                 # end of epoch
                 # log of last step is combined with validation and rollout

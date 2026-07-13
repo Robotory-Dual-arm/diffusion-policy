@@ -51,6 +51,9 @@ from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
+DIFFUSION_INFERENCE_STEPS = 16
+FLOW_MATCHING_INFERENCE_STEPS = 10
+
 @click.command()
 @click.option('--input', '-i', required=True, help='Path to checkpoint')   # checkpoint
 @click.option('--output', '-o', required=True, help='Directory to save recording')   
@@ -63,10 +66,17 @@ OmegaConf.register_new_resolver("eval", eval, replace=True)
 @click.option('--max_duration', '-md', default=60, help='Max duration for each epoch in seconds.')
 @click.option('--frequency', '-f', default=10, type=float, help="Control frequency in Hz.")  
 @click.option('--command_latency', '-cl', default=0.01, type=float, help="Latency between receiving SapceMouse command to executing on Robot in Sec.")
+@click.option(
+    '--flow_inference_steps',
+    default=FLOW_MATCHING_INFERENCE_STEPS,
+    type=click.IntRange(min=1),
+    show_default=True,
+    help="Euler integration steps used only for flow-matching checkpoints.",
+)
 def main(input, output, robot_ip, match_dataset, match_episode,
     vis_camera_idx, init_joints, 
     steps_per_inference, max_duration,
-    frequency, command_latency):
+    frequency, command_latency, flow_inference_steps):
 
     # load checkpoint; checkpoint의 cfg 및 파라미터들 다 가져옴
     ckpt_path = input
@@ -93,22 +103,29 @@ def main(input, output, robot_ip, match_dataset, match_episode,
 
     # hacks for method-specific setup.
     action_offset = 0
-    delta_action = False  
-    if 'diffusion' in cfg.name:
-        # diffusion model
-        policy: BaseImagePolicy
-        policy = workspace.model   # state_dicts의 model을 가져옴 (가중치 값들)
-        if cfg.training.use_ema:
-            policy = workspace.ema_model   # ema_model 가져옴 (가중치 값들)
-        device = torch.device('cuda')
-        policy.eval().to(device)
-        
-        # set inference params
-        policy.num_inference_steps = 16 # DDIM inference iterations; 노이즈 제거 step 수
-        policy.n_action_steps = policy.horizon - policy.n_obs_steps + 1   # 과거부터 horizon 뽑고, obs만큼 빼고, 1 더하기 (16 - 2 + 1 = 15)
+    delta_action = False
+    policy: BaseImagePolicy = workspace.model
+    if cfg.training.use_ema:
+        policy = workspace.ema_model
 
+    policy_class_name = type(policy).__name__
+    policy_class_name_lower = policy_class_name.lower()
+    if 'flowmatching' in policy_class_name_lower:
+        policy.num_inference_steps = flow_inference_steps
+        sampler_name = 'flow-matching Euler'
+    elif 'diffusion' in policy_class_name_lower:
+        policy.num_inference_steps = DIFFUSION_INFERENCE_STEPS
+        sampler_name = 'DDIM'
     else:
-        raise RuntimeError("Unsupported policy type: ", cfg.name)
+        raise RuntimeError(f"Unsupported policy type: {policy_class_name}")
+
+    device = torch.device('cuda')
+    policy.eval().to(device)
+    policy.n_action_steps = policy.horizon - policy.n_obs_steps + 1
+    print(
+        f"Policy: {policy_class_name} / sampler: {sampler_name} / "
+        f"inference steps: {policy.num_inference_steps}"
+    )
 
 
     # setup experiment

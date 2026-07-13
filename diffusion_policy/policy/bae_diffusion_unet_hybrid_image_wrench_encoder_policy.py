@@ -87,6 +87,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             n_groups=8,
             cond_predict_scale=True,
             pose_repr: dict={},
+            force_regularization: dict=None,
             # parameters passed to step
             **kwargs):
         super().__init__()
@@ -307,6 +308,31 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             cond_predict_scale=cond_predict_scale
         )
 
+        force_regularization = force_regularization or {}
+        vision_dropout_prob = float(
+            force_regularization.get('vision_dropout_prob', 0.0))
+        low_dim_dropout_prob = float(
+            force_regularization.get('low_dim_dropout_prob', 0.0))
+        aux_next_wrench_weight = float(
+            force_regularization.get('aux_next_wrench_weight', 0.0))
+        for name, probability in (
+                ('vision_dropout_prob', vision_dropout_prob),
+                ('low_dim_dropout_prob', low_dim_dropout_prob)):
+            if not 0.0 <= probability < 1.0:
+                raise ValueError(f"{name} must be in [0, 1), got {probability}")
+        if aux_next_wrench_weight < 0.0:
+            raise ValueError(
+                "aux_next_wrench_weight must be non-negative, "
+                f"got {aux_next_wrench_weight}")
+
+        aux_next_wrench_head = None
+        if aux_next_wrench_weight > 0.0:
+            if force_feature_dim == 0:
+                raise ValueError(
+                    "aux_next_wrench_weight requires at least one wrench observation")
+            aux_next_wrench_head = nn.Linear(
+                force_feature_dim, self.num_wrench_component)
+
         self.obs_config = obs_config
         self.vision_model_name = vc.model_name
         self.vision_encoder = vision_encoder
@@ -337,6 +363,15 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         self.key_shape_map = key_shape_map
         self.fuse_mode = obs_encoder.fuse_mode
         self.position_encoding = obs_encoder.position_encoding
+        self.vision_dropout_prob = vision_dropout_prob
+        self.low_dim_dropout_prob = low_dim_dropout_prob
+        self.aux_next_wrench_weight = aux_next_wrench_weight
+        self.aux_next_wrench_head = aux_next_wrench_head
+        self.force_regularization_enabled = (
+            vision_dropout_prob > 0.0
+            or low_dim_dropout_prob > 0.0
+            or aux_next_wrench_weight > 0.0
+        )
 
    
         if num_inference_steps is None:
@@ -349,6 +384,13 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             print("Force Encoder params: %e" % sum(p.numel() for p in self.force_encoder.parameters()))
         else:
             print("Force Encoder params: 0.000000e+00")
+        if self.force_regularization_enabled:
+            print(
+                "Force regularization: "
+                f"vision_dropout={self.vision_dropout_prob}, "
+                f"low_dim_dropout={self.low_dim_dropout_prob}, "
+                f"aux_next_wrench_weight={self.aux_next_wrench_weight}"
+            )
    
 
     # ========= inference  ============
@@ -458,7 +500,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
       
         this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:])) # (B, To, ...) -> (B*To, ...)
 
-        modality_features = list()
+        vision_modality_features = list()
 
         # Image encoding
         vision_features = []
@@ -474,7 +516,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             else:
                 vision_feature = raw_vision_feature[:, 0, :]   # CLS token
             vision_features.append(vision_feature.reshape(B, -1)) # (B, To*vision_feature_dim)
-            modality_features.append(vision_feature.reshape(B, To, -1)) # (B, To, vision_feature_dim)
+            vision_modality_features.append(vision_feature.reshape(B, To, -1)) # (B, To, vision_feature_dim)
 
         # low-dim encoding
         if len(self.low_dim_keys) > 0:
@@ -488,6 +530,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
 
         # Force encoding
         force_features, force_modality_features = self._encode_wrench(wrench_nobs, B)
+        modality_features = vision_modality_features.copy()
         modality_features.extend(force_modality_features)
 
         
@@ -579,7 +622,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         
         this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:])) # (B, To, ...) -> (B*To, ...)
 
-        modality_features = list()
+        vision_modality_features = list()
 
         # Image encoding
         vision_features = []
@@ -595,7 +638,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             else:
                 vision_feature = raw_vision_feature[:, 0, :]   # CLS token
             vision_features.append(vision_feature.reshape(B, -1)) # (B, To*vision_feature_dim)
-            modality_features.append(vision_feature.reshape(B, To, -1)) # (B, To, vision_feature_dim)
+            vision_modality_features.append(vision_feature.reshape(B, To, -1)) # (B, To, vision_feature_dim)
 
         # low-dim encoding
         if len(self.low_dim_keys) > 0:
@@ -606,10 +649,34 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             low_dim_features = torch.stack(low_dim_features, dim=1)  # (B, To, low_dim_dim)
         else:
             low_dim_features = torch.empty(B, To, 0, device=nactions.device, dtype=nactions.dtype)
-        
+
+        dropout_metrics = {}
+        if self.training and self.vision_dropout_prob > 0.0:
+            vision_keep = (
+                torch.rand(B, 1, device=nactions.device)
+                >= self.vision_dropout_prob
+            ).to(nactions.dtype)
+            vision_features = [
+                feature * vision_keep for feature in vision_features
+            ]
+            vision_token_keep = vision_keep.unsqueeze(-1)
+            vision_modality_features = [
+                feature * vision_token_keep
+                for feature in vision_modality_features
+            ]
+            dropout_metrics['vision_drop_fraction'] = 1.0 - vision_keep.mean()
+
+        if self.training and self.low_dim_dropout_prob > 0.0:
+            low_dim_keep = (
+                torch.rand(B, 1, 1, device=nactions.device)
+                >= self.low_dim_dropout_prob
+            ).to(nactions.dtype)
+            low_dim_features = low_dim_features * low_dim_keep
+            dropout_metrics['low_dim_drop_fraction'] = 1.0 - low_dim_keep.mean()
 
         # Force encoding
         force_features, force_modality_features = self._encode_wrench(wrench_nobs, B)
+        modality_features = vision_modality_features.copy()
         modality_features.extend(force_modality_features)
 
         
@@ -691,5 +758,60 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         loss = F.mse_loss(pred, target, reduction='none')
         loss = loss * loss_mask.type(loss.dtype)
         loss = reduce(loss, 'b ... -> b (...)', 'mean')
-        loss = loss.mean()
-        return loss
+        diffusion_loss = loss.mean()
+
+        total_loss = diffusion_loss
+        loss_metrics = {
+            'diffusion_loss': diffusion_loss.detach(),
+        }
+
+        if self.force_regularization_enabled:
+            if len(force_modality_features) == 0:
+                raise RuntimeError(
+                    "Force regularization is enabled without an encoded wrench feature")
+            force_latent = force_modality_features[0][:, -1]
+            loss_metrics['force_feature_std'] = (
+                force_latent.std(dim=0, unbiased=False).mean().detach())
+            loss_metrics['force_token_norm'] = (
+                force_latent.norm(dim=-1).mean().detach())
+            if len(vision_modality_features) > 0:
+                vision_tokens = torch.cat(vision_modality_features, dim=1)
+                loss_metrics['vision_token_norm'] = (
+                    vision_tokens.norm(dim=-1).mean().detach())
+            loss_metrics.update({
+                key: value.detach() for key, value in dropout_metrics.items()
+            })
+
+        if self.aux_next_wrench_weight > 0.0:
+            if 'future_wrench' not in batch:
+                raise KeyError(
+                    "Auxiliary next-wrench loss requires "
+                    "task.dataset.future_wrench_steps >= 1")
+            assert self.aux_next_wrench_head is not None
+            normalized_future_wrench = {
+                key: self.normalizer[key].normalize(batch['future_wrench'][key])
+                for key in self.wrench_keys
+            }
+            next_wrench_target = torch.cat([
+                normalized_future_wrench[key][:, 0, :, -1]
+                for key in self.wrench_keys
+            ], dim=-1)
+            if next_wrench_target.shape[-1] != self.num_wrench_component:
+                raise RuntimeError(
+                    "Unexpected next-wrench target shape: "
+                    f"{next_wrench_target.shape}")
+
+            next_wrench_pred = self.aux_next_wrench_head(force_latent)
+            aux_next_wrench_loss = F.mse_loss(
+                next_wrench_pred, next_wrench_target)
+            weighted_aux_loss = (
+                self.aux_next_wrench_weight * aux_next_wrench_loss)
+            total_loss = total_loss + weighted_aux_loss
+            loss_metrics.update({
+                'aux_next_wrench_loss': aux_next_wrench_loss.detach(),
+                'weighted_aux_next_wrench_loss': weighted_aux_loss.detach(),
+            })
+
+        if self.force_regularization_enabled:
+            return {'loss': total_loss, **loss_metrics}
+        return total_loss

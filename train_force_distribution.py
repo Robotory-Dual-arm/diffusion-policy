@@ -55,6 +55,9 @@ class SampleIndex:
     label_mode: str = "window"
     image_force_align: str = "center-window"
     phase_bins: int = 0
+    dataset_format: str = "common"
+    obs_group: str = "observations"
+    frame_rate: float = 10.0
 
 
 def demo_sort_key(name: str) -> tuple[int, str]:
@@ -81,6 +84,95 @@ def parse_dims(text: str | Iterable[int]) -> tuple[int, ...]:
 
 def dim_names(force_dims: Iterable[int]) -> list[str]:
     return [WRENCH_NAMES[int(dim)] for dim in force_dims]
+
+
+def parse_demo_filter(text: str | None) -> set[str]:
+    if not text:
+        return set()
+    names = set()
+    for part in text.replace(",", " ").split():
+        part = part.strip()
+        if not part:
+            continue
+        names.add(part if part.startswith("demo_") else f"demo_{part}")
+    return names
+
+
+def filter_demo_names(
+    demo_names: Iterable[str],
+    max_demos: int | None,
+    exclude_demos: str | None,
+) -> list[str]:
+    demos = list(demo_names)
+    if max_demos is not None:
+        demos = demos[:max_demos]
+    excluded = parse_demo_filter(exclude_demos)
+    if excluded:
+        demos = [name for name in demos if name not in excluded]
+    return demos
+
+
+def infer_dataset_format(h5: h5py.File, requested: str = "auto") -> str:
+    if requested != "auto":
+        return requested
+    if "data" not in h5:
+        raise KeyError("Expected a top-level /data group in the HDF5 file.")
+    demos = sorted(h5["data"].keys(), key=demo_sort_key)
+    if not demos:
+        raise RuntimeError("No demos found under /data.")
+    demo = h5["data"][demos[0]]
+    if "observations" in demo:
+        return "common"
+    if "obs" in demo:
+        return "diffusion"
+    raise KeyError(f"{demos[0]} has neither observations nor obs group.")
+
+
+def observation_group_name(demo_group, dataset_format: str) -> str:
+    if dataset_format == "common":
+        return "observations"
+    if dataset_format == "diffusion":
+        return "obs"
+    if "observations" in demo_group:
+        return "observations"
+    if "obs" in demo_group:
+        return "obs"
+    raise KeyError("Demo has neither observations nor obs group.")
+
+
+def get_observation_group(demo_group, dataset_format: str):
+    group_name = observation_group_name(demo_group, dataset_format)
+    return demo_group[group_name], group_name
+
+
+def resolve_observation_key(obs, key: str, kind: str, dataset_format: str) -> str:
+    if key in obs:
+        return key
+    if kind == "image":
+        fallbacks = []
+        if dataset_format == "diffusion" and key == "image_R":
+            fallbacks.append("image0")
+        fallbacks.extend(["image0", "image_R"])
+        for fallback in fallbacks:
+            if fallback in obs:
+                return fallback
+    raise KeyError(f"Observation key {key!r} not found.")
+
+
+def select_frame_indices(
+    image_count: int,
+    limit_frames_per_demo: int | None,
+) -> np.ndarray:
+    if limit_frames_per_demo is None or limit_frames_per_demo >= image_count:
+        return np.arange(image_count, dtype=np.int64)
+    return np.unique(
+        np.linspace(
+            0,
+            image_count - 1,
+            int(limit_frames_per_demo),
+            dtype=np.int64,
+        )
+    )
 
 
 def seed_everything(seed: int) -> None:
@@ -200,6 +292,7 @@ def build_sample_index(
     image_force_align: str,
     max_demos: int | None,
     limit_frames_per_demo: int | None,
+    exclude_demos: str | None = None,
 ) -> SampleIndex:
     hdf5_path = str(Path(hdf5_path).expanduser())
     demo_idx: list[int] = []
@@ -214,9 +307,11 @@ def build_sample_index(
     with h5py.File(hdf5_path, "r") as h5:
         if "data" not in h5:
             raise KeyError("Expected a top-level /data group in the HDF5 file.")
-        demos = sorted(h5["data"].keys(), key=demo_sort_key)
-        if max_demos is not None:
-            demos = demos[:max_demos]
+        demos = filter_demo_names(
+            sorted(h5["data"].keys(), key=demo_sort_key),
+            max_demos=max_demos,
+            exclude_demos=exclude_demos,
+        )
 
         for demo_name in demos:
             obs = h5["data"][demo_name]["observations"]
@@ -234,17 +329,7 @@ def build_sample_index(
                     f"timestamp_robot has {len(robot_ts)} entries."
                 )
 
-            if limit_frames_per_demo is None or limit_frames_per_demo >= image_count:
-                selected_frames = np.arange(image_count, dtype=np.int64)
-            else:
-                selected_frames = np.unique(
-                    np.linspace(
-                        0,
-                        image_count - 1,
-                        int(limit_frames_per_demo),
-                        dtype=np.int64,
-                    )
-                )
+            selected_frames = select_frame_indices(image_count, limit_frames_per_demo)
 
             wrench_series = preprocess_wrench_series(
                 raw_wrench=obs[wrench_key][:],
@@ -308,6 +393,8 @@ def build_sample_index(
         label_mode="window",
         image_force_align=image_force_align,
         phase_bins=0,
+        dataset_format="common",
+        obs_group="observations",
     )
 
 
@@ -324,6 +411,7 @@ def build_single_force_sample_index(
     image_force_align: str,
     max_demos: int | None,
     limit_frames_per_demo: int | None,
+    exclude_demos: str | None = None,
 ) -> SampleIndex:
     hdf5_path = str(Path(hdf5_path).expanduser())
     demo_idx: list[int] = []
@@ -336,9 +424,11 @@ def build_single_force_sample_index(
     with h5py.File(hdf5_path, "r") as h5:
         if "data" not in h5:
             raise KeyError("Expected a top-level /data group in the HDF5 file.")
-        demos = sorted(h5["data"].keys(), key=demo_sort_key)
-        if max_demos is not None:
-            demos = demos[:max_demos]
+        demos = filter_demo_names(
+            sorted(h5["data"].keys(), key=demo_sort_key),
+            max_demos=max_demos,
+            exclude_demos=exclude_demos,
+        )
 
         for demo_name in demos:
             obs = h5["data"][demo_name]["observations"]
@@ -356,17 +446,7 @@ def build_single_force_sample_index(
                     f"timestamp_robot has {len(robot_ts)} entries."
                 )
 
-            if limit_frames_per_demo is None or limit_frames_per_demo >= image_count:
-                selected_frames = np.arange(image_count, dtype=np.int64)
-            else:
-                selected_frames = np.unique(
-                    np.linspace(
-                        0,
-                        image_count - 1,
-                        int(limit_frames_per_demo),
-                        dtype=np.int64,
-                    )
-                )
+            selected_frames = select_frame_indices(image_count, limit_frames_per_demo)
 
             wrench_series = preprocess_wrench_series(
                 raw_wrench=obs[wrench_key][:],
@@ -425,6 +505,8 @@ def build_single_force_sample_index(
         label_mode="sample",
         image_force_align=image_force_align,
         phase_bins=0,
+        dataset_format="common",
+        obs_group="observations",
     )
 
 
@@ -444,6 +526,7 @@ def build_phase_sample_index(
     phase_source: str,
     max_demos: int | None,
     limit_frames_per_demo: int | None,
+    exclude_demos: str | None = None,
 ) -> SampleIndex:
     if phase_bins < 2:
         raise ValueError("--phase-bins must be at least 2 for phase label mode.")
@@ -458,9 +541,11 @@ def build_phase_sample_index(
     with h5py.File(hdf5_path, "r") as h5:
         if "data" not in h5:
             raise KeyError("Expected a top-level /data group in the HDF5 file.")
-        demos = sorted(h5["data"].keys(), key=demo_sort_key)
-        if max_demos is not None:
-            demos = demos[:max_demos]
+        demos = filter_demo_names(
+            sorted(h5["data"].keys(), key=demo_sort_key),
+            max_demos=max_demos,
+            exclude_demos=exclude_demos,
+        )
 
         for demo_name in demos:
             obs = h5["data"][demo_name]["observations"]
@@ -478,17 +563,7 @@ def build_phase_sample_index(
                     f"timestamp_robot has {len(robot_ts)} entries."
                 )
 
-            if limit_frames_per_demo is None or limit_frames_per_demo >= image_count:
-                selected_frames = np.arange(image_count, dtype=np.int64)
-            else:
-                selected_frames = np.unique(
-                    np.linspace(
-                        0,
-                        image_count - 1,
-                        int(limit_frames_per_demo),
-                        dtype=np.int64,
-                    )
-                )
+            selected_frames = select_frame_indices(image_count, limit_frames_per_demo)
 
             wrench_series = preprocess_wrench_series(
                 raw_wrench=obs[wrench_key][:],
@@ -583,12 +658,245 @@ def build_phase_sample_index(
         label_mode="phase",
         image_force_align=image_force_align,
         phase_bins=phase_bins,
+        dataset_format="common",
+        obs_group="observations",
+    )
+
+
+def diffusion_wrench_history(
+    raw_wrench,
+    force_dims: tuple[int, ...],
+) -> np.ndarray:
+    wrench = np.asarray(raw_wrench, dtype=np.float32)
+    max_dim = max(force_dims)
+    if wrench.ndim == 3:
+        if max_dim < wrench.shape[1]:
+            return wrench[:, force_dims, :]
+        if max_dim < wrench.shape[2]:
+            return np.moveaxis(wrench[:, :, force_dims], -1, 1)
+    elif wrench.ndim == 2:
+        if max_dim < wrench.shape[1]:
+            return wrench[:, force_dims, None]
+    raise ValueError(
+        "Diffusion-format wrench must have shape (frame, dim, history), "
+        "(frame, history, dim), or (frame, dim). "
+        f"Got shape {wrench.shape} for force dims {list(force_dims)}."
+    )
+
+
+def phase_for_frame(
+    frame: int,
+    image_count: int,
+    obs,
+    phase_source: str,
+    frame_rate: float,
+) -> float:
+    if phase_source == "time" and "timestamp_robot" in obs:
+        robot_ts = np.asarray(obs["timestamp_robot"][:], dtype=np.float64)
+        denom = max(float(robot_ts[-1] - robot_ts[0]), 1e-9)
+        phase = float((robot_ts[int(frame)] - robot_ts[0]) / denom)
+    elif phase_source == "time":
+        denom = max((image_count - 1) / max(float(frame_rate), 1e-9), 1e-9)
+        phase = float((int(frame) / max(float(frame_rate), 1e-9)) / denom)
+    else:
+        phase = float(int(frame) / max(image_count - 1, 1))
+    return min(max(phase, 0.0), 1.0)
+
+
+def build_diffusion_sample_index(
+    hdf5_path: str,
+    image_key: str,
+    wrench_key: str,
+    force_dims: tuple[int, ...],
+    target_std_floor: float,
+    min_window_samples: int,
+    label_mode: str,
+    phase_bins: int,
+    phase_source: str,
+    max_demos: int | None,
+    limit_frames_per_demo: int | None,
+    exclude_demos: str | None,
+    frame_rate: float,
+) -> SampleIndex:
+    if label_mode not in {"window", "sample", "phase"}:
+        raise ValueError("--label-mode must be window, sample, or phase.")
+    if label_mode == "phase" and phase_bins < 2:
+        raise ValueError("--phase-bins must be at least 2 for phase label mode.")
+    if phase_source not in {"frame", "time"}:
+        raise ValueError("--phase-source must be frame or time.")
+
+    hdf5_path = str(Path(hdf5_path).expanduser())
+    min_samples = max(int(min_window_samples), 1)
+    min_var = float(target_std_floor) ** 2
+    kept_demos: list[str] = []
+    records: list[tuple[int, int, float, np.ndarray, np.ndarray]] = []
+    resolved_image_key: str | None = None
+    resolved_wrench_key: str | None = None
+    resolved_obs_group: str | None = None
+
+    with h5py.File(hdf5_path, "r") as h5:
+        if "data" not in h5:
+            raise KeyError("Expected a top-level /data group in the HDF5 file.")
+        dataset_format = infer_dataset_format(h5, "diffusion")
+        demos = filter_demo_names(
+            sorted(h5["data"].keys(), key=demo_sort_key),
+            max_demos=max_demos,
+            exclude_demos=exclude_demos,
+        )
+
+        for demo_name in demos:
+            obs, obs_group = get_observation_group(h5["data"][demo_name], dataset_format)
+            current_image_key = resolve_observation_key(
+                obs,
+                image_key,
+                kind="image",
+                dataset_format=dataset_format,
+            )
+            if wrench_key not in obs:
+                raise KeyError(f"{demo_name} is missing observation key {wrench_key!r}.")
+            current_wrench_key = wrench_key
+
+            if resolved_image_key is None:
+                resolved_image_key = current_image_key
+                resolved_wrench_key = current_wrench_key
+                resolved_obs_group = obs_group
+            elif (
+                resolved_image_key != current_image_key
+                or resolved_wrench_key != current_wrench_key
+                or resolved_obs_group != obs_group
+            ):
+                raise RuntimeError("Resolved HDF5 keys/groups changed across demos.")
+
+            image_count = int(obs[current_image_key].shape[0])
+            wrench_history = diffusion_wrench_history(obs[current_wrench_key], force_dims)
+            if image_count != int(wrench_history.shape[0]):
+                raise ValueError(
+                    f"{demo_name}: {current_image_key} has {image_count} frames but "
+                    f"{current_wrench_key} has {wrench_history.shape[0]} frames."
+                )
+
+            selected_frames = select_frame_indices(image_count, limit_frames_per_demo)
+            current_demo_idx = len(kept_demos)
+            added = 0
+            for frame in selected_frames:
+                frame = int(frame)
+                force_window = wrench_history[frame]
+                if force_window.shape[-1] < min_samples:
+                    continue
+                mu = force_window.mean(axis=-1).astype(np.float32)
+                var = np.maximum(force_window.var(axis=-1), min_var).astype(np.float32)
+                phase = phase_for_frame(
+                    frame=frame,
+                    image_count=image_count,
+                    obs=obs,
+                    phase_source=phase_source,
+                    frame_rate=frame_rate,
+                )
+                records.append((current_demo_idx, frame, phase, mu, var))
+                added += 1
+            if added > 0:
+                kept_demos.append(demo_name)
+            else:
+                records = [record for record in records if record[0] != current_demo_idx]
+
+    if not records:
+        raise RuntimeError("No training samples were built. Check keys and filters.")
+
+    demo_idx: list[int] = []
+    frame_idx: list[int] = []
+    phase_values: list[float] = []
+    target_mean: list[np.ndarray] = []
+    target_var: list[np.ndarray] = []
+
+    if label_mode == "phase":
+        bin_values: list[list[np.ndarray]] = [[] for _ in range(phase_bins)]
+        record_bins = []
+        for _, _, phase, mu, _var in records:
+            bin_idx = min(int(phase * phase_bins), phase_bins - 1)
+            record_bins.append(bin_idx)
+            bin_values[bin_idx].append(mu)
+
+        global_values = np.stack([record[3] for record in records]).astype(np.float32)
+        global_mean = global_values.mean(axis=0)
+        global_var = np.maximum(global_values.var(axis=0), min_var)
+        bin_mean = np.zeros((phase_bins, len(force_dims)), dtype=np.float32)
+        bin_var = np.zeros((phase_bins, len(force_dims)), dtype=np.float32)
+        for bin_idx, values in enumerate(bin_values):
+            if len(values) == 0:
+                bin_mean[bin_idx] = global_mean
+                bin_var[bin_idx] = global_var
+                continue
+            stacked = np.stack(values).astype(np.float32)
+            bin_mean[bin_idx] = stacked.mean(axis=0)
+            bin_var[bin_idx] = np.maximum(stacked.var(axis=0), min_var)
+
+        for record, bin_idx in zip(records, record_bins):
+            demo_idx.append(record[0])
+            frame_idx.append(record[1])
+            phase_values.append(record[2])
+            target_mean.append(bin_mean[bin_idx])
+            target_var.append(bin_var[bin_idx])
+    else:
+        for demo_id, frame, phase, mu, var in records:
+            demo_idx.append(demo_id)
+            frame_idx.append(frame)
+            phase_values.append(phase)
+            target_mean.append(mu)
+            if label_mode == "sample":
+                target_var.append(np.zeros(len(force_dims), dtype=np.float32))
+            else:
+                target_var.append(var)
+
+    return SampleIndex(
+        hdf5_path=hdf5_path,
+        demo_names=kept_demos,
+        demo_idx=np.asarray(demo_idx, dtype=np.int64),
+        frame_idx=np.asarray(frame_idx, dtype=np.int64),
+        phase=np.asarray(phase_values, dtype=np.float32),
+        target_mean=np.stack(target_mean).astype(np.float32),
+        target_var=np.stack(target_var).astype(np.float32),
+        tcp=None,
+        image_key=resolved_image_key or image_key,
+        wrench_key=resolved_wrench_key or wrench_key,
+        force_dims=force_dims,
+        window_sec=0.0,
+        wrench_zero_samples=0,
+        wrench_ema_alpha=0.0,
+        label_mode=label_mode,
+        image_force_align="stored-history",
+        phase_bins=phase_bins if label_mode == "phase" else 0,
+        dataset_format="diffusion",
+        obs_group=resolved_obs_group or "obs",
+        frame_rate=float(frame_rate),
     )
 
 
 def build_index_from_args(args: argparse.Namespace) -> SampleIndex:
     force_dims = parse_dims(args.force_dims)
     label_mode = getattr(args, "label_mode", "window")
+    with h5py.File(str(Path(args.hdf5).expanduser()), "r") as h5:
+        dataset_format = infer_dataset_format(
+            h5,
+            getattr(args, "dataset_format", "auto"),
+        )
+    if dataset_format == "diffusion":
+        index = build_diffusion_sample_index(
+            hdf5_path=args.hdf5,
+            image_key=args.image_key,
+            wrench_key=args.wrench_key,
+            force_dims=force_dims,
+            target_std_floor=args.target_std_floor,
+            min_window_samples=args.min_window_samples,
+            label_mode=label_mode,
+            phase_bins=args.phase_bins,
+            phase_source=args.phase_source,
+            max_demos=args.max_demos,
+            limit_frames_per_demo=args.limit_frames_per_demo,
+            exclude_demos=getattr(args, "exclude_demos", None),
+            frame_rate=getattr(args, "frame_rate", 10.0),
+        )
+        return maybe_attach_tcp_from_args(index, args)
+
     common_kwargs = dict(
         hdf5_path=args.hdf5,
         image_key=args.image_key,
@@ -603,6 +911,7 @@ def build_index_from_args(args: argparse.Namespace) -> SampleIndex:
         image_force_align=args.image_force_align,
         max_demos=args.max_demos,
         limit_frames_per_demo=args.limit_frames_per_demo,
+        exclude_demos=getattr(args, "exclude_demos", None),
     )
     if label_mode == "window":
         index = build_sample_index(**common_kwargs)
@@ -827,7 +1136,10 @@ def attach_tcp_to_index(
             sample_ids = np.nonzero(index.demo_idx == demo_id)[0]
             if len(sample_ids) == 0:
                 continue
-            obs = h5["data"][demo_name]["observations"]
+            obs, _ = get_observation_group(
+                h5["data"][demo_name],
+                index.dataset_format,
+            )
             if joint_key not in obs:
                 raise KeyError(f"{demo_name} is missing observation key {joint_key!r}.")
             frames = index.frame_idx[sample_ids].astype(np.int64)
@@ -1078,9 +1390,11 @@ class Hdf5ForceDataset(Dataset):
         sample_id = int(self.sample_ids[item])
         demo_name = self.index.demo_names[int(self.index.demo_idx[sample_id])]
         frame = int(self.index.frame_idx[sample_id])
-        image = np.asarray(
-            self.h5["data"][demo_name]["observations"][self.index.image_key][frame]
+        obs, _ = get_observation_group(
+            self.h5["data"][demo_name],
+            self.index.dataset_format,
         )
+        image = np.asarray(obs[self.index.image_key][frame])
         image_tensor = preprocess_image(
             image=image,
             image_size=self.image_size,
@@ -1775,6 +2089,8 @@ def save_checkpoint(
         "tcp_std": None if tcp_std is None else tcp_std.astype(np.float32),
         "target_names": dim_names(index.force_dims),
         "hdf5_path": index.hdf5_path,
+        "dataset_format": index.dataset_format,
+        "obs_group": index.obs_group,
         "image_key": index.image_key,
         "wrench_key": index.wrench_key,
         "force_dims": index.force_dims,
@@ -1785,6 +2101,7 @@ def save_checkpoint(
         "image_force_align": index.image_force_align,
         "phase_bins": index.phase_bins,
         "phase_source": getattr(args, "phase_source", "frame"),
+        "frame_rate": index.frame_rate,
         "image_size": args.image_size,
         "image_crop_ratio": args.image_crop_ratio,
         "bgr_to_rgb": args.bgr_to_rgb,
@@ -1834,6 +2151,8 @@ def write_run_metadata(
 ) -> None:
     payload = {
         "hdf5_path": index.hdf5_path,
+        "dataset_format": index.dataset_format,
+        "obs_group": index.obs_group,
         "image_key": index.image_key,
         "wrench_key": index.wrench_key,
         "force_dims": list(index.force_dims),
@@ -1845,6 +2164,7 @@ def write_run_metadata(
         "image_force_align": index.image_force_align,
         "phase_bins": index.phase_bins,
         "phase_source": getattr(args, "phase_source", "frame"),
+        "frame_rate": index.frame_rate,
         "sample_count": int(len(index.frame_idx)),
         "demo_count": int(len(index.demo_names)),
         "train_demo_count": len(train_demos),
@@ -1919,6 +2239,8 @@ def write_experiment_summary(
         "Dataset",
         "-" * 7,
         f"hdf5_path: {index.hdf5_path}",
+        f"dataset_format: {index.dataset_format}",
+        f"obs_group: {index.obs_group}",
         f"image_key: {index.image_key}",
         f"wrench_key: {index.wrench_key}",
         f"demos: {len(index.demo_names)}",
@@ -1930,6 +2252,7 @@ def write_experiment_summary(
         "-" * 5,
         f"label_mode: {index.label_mode}",
         f"image_force_align: {index.image_force_align}",
+        f"frame_rate: {index.frame_rate}",
         f"force_dims: {list(index.force_dims)} ({', '.join(dim_names(index.force_dims))})",
         f"window_sec: {index.window_sec}",
         f"wrench_zero_samples: {index.wrench_zero_samples}",
@@ -2015,9 +2338,11 @@ def save_test_images(
             sample_id = int(sample_id)
             demo_name = index.demo_names[int(index.demo_idx[sample_id])]
             frame = int(index.frame_idx[sample_id])
-            image = np.asarray(
-                h5["data"][demo_name]["observations"][index.image_key][frame]
+            obs, _ = get_observation_group(
+                h5["data"][demo_name],
+                index.dataset_format,
             )
+            image = np.asarray(obs[index.image_key][frame])
             image_tensor = preprocess_image(
                 image=image,
                 image_size=image_size,
@@ -2061,11 +2386,13 @@ def print_index_summary(index: SampleIndex) -> None:
     window_std = np.sqrt(index.target_var)
     print(f"HDF5: {index.hdf5_path}")
     print(f"demos={len(index.demo_names)} samples={len(index.frame_idx)}")
+    print(f"dataset_format={index.dataset_format} obs_group={index.obs_group}")
     print(f"image_key={index.image_key} wrench_key={index.wrench_key}")
     print(f"force_dims={list(index.force_dims)} names={names}")
     print(
         f"label_mode={index.label_mode} image_force_align={index.image_force_align} "
-        f"window_sec={index.window_sec} phase_bins={index.phase_bins}"
+        f"window_sec={index.window_sec} phase_bins={index.phase_bins} "
+        f"frame_rate={index.frame_rate}"
     )
     print(
         f"wrench_zero_samples={index.wrench_zero_samples} "
@@ -2096,6 +2423,8 @@ def train_command(args: argparse.Namespace) -> None:
     args.hdf5 = resolve_hdf5_path(args, DEFAULT_HDF5)
     force_dims = parse_dims(args.force_dims)
     index = build_index_from_args(args)
+    if args.bgr_to_rgb is None:
+        args.bgr_to_rgb = index.dataset_format == "common"
     print_index_summary(index)
 
     train_ids, val_ids, train_demos, val_demos = split_by_demo(
@@ -2386,7 +2715,9 @@ def load_predict_image(args: argparse.Namespace, checkpoint: dict) -> np.ndarray
     image_key = args.image_key or checkpoint["image_key"]
     with h5py.File(hdf5_path, "r") as h5:
         demo_name = resolve_demo_name(h5, demo_text)
-        return np.asarray(h5["data"][demo_name]["observations"][image_key][frame])
+        dataset_format = checkpoint_value(checkpoint, "dataset_format", "common")
+        obs, _ = get_observation_group(h5["data"][demo_name], dataset_format)
+        return np.asarray(obs[image_key][frame])
 
 
 def load_image_tensor_for_prediction(
@@ -2446,8 +2777,10 @@ def raw_tcp_for_frame(
         tcp_history_stride=tcp_history_stride,
     )
     with h5py.File(hdf5_path, "r") as h5:
+        dataset_format = checkpoint_value(checkpoint, "dataset_format", "common")
+        obs, _ = get_observation_group(h5["data"][demo_name], dataset_format)
         joints = read_hdf5_rows_unordered(
-            h5["data"][demo_name]["observations"][joint_key],
+            obs[joint_key],
             frames,
         ).astype(np.float64)
     return joints_to_tcp_history_features(
@@ -2746,11 +3079,32 @@ def build_index_from_checkpoint(
     wrench_key: str,
 ) -> SampleIndex:
     label_mode = checkpoint_value(checkpoint, "label_mode", "window")
+    force_dims = parse_dims(checkpoint_value(checkpoint, "force_dims", "0,1,2"))
+    dataset_format = checkpoint_value(checkpoint, "dataset_format", "common")
+    with h5py.File(str(Path(hdf5_path).expanduser()), "r") as h5:
+        dataset_format = infer_dataset_format(h5, str(dataset_format))
+    if dataset_format == "diffusion":
+        return build_diffusion_sample_index(
+            hdf5_path=hdf5_path,
+            image_key=image_key,
+            wrench_key=wrench_key,
+            force_dims=force_dims,
+            target_std_floor=float(checkpoint_value(checkpoint, "target_std_floor", 0.05)),
+            min_window_samples=int(checkpoint_value(checkpoint, "min_window_samples", 1)),
+            label_mode=label_mode,
+            phase_bins=int(checkpoint_value(checkpoint, "phase_bins", 100)),
+            phase_source=checkpoint_value(checkpoint, "phase_source", "frame"),
+            max_demos=None,
+            limit_frames_per_demo=None,
+            exclude_demos=None,
+            frame_rate=float(checkpoint_value(checkpoint, "frame_rate", 10.0)),
+        )
+
     common_kwargs = dict(
         hdf5_path=hdf5_path,
         image_key=image_key,
         wrench_key=wrench_key,
-        force_dims=parse_dims(checkpoint_value(checkpoint, "force_dims", "0,1,2")),
+        force_dims=force_dims,
         window_sec=float(checkpoint_value(checkpoint, "window_sec", 0.05)),
         target_std_floor=float(checkpoint_value(checkpoint, "target_std_floor", 0.05)),
         min_window_samples=int(checkpoint_value(checkpoint, "min_window_samples", 1)),
@@ -2778,6 +3132,24 @@ def build_index_from_checkpoint(
         sample_kwargs.pop("target_std_floor")
         return build_single_force_sample_index(**sample_kwargs)
     return build_sample_index(**common_kwargs)
+
+
+def x_values_for_frames(
+    obs,
+    frames: np.ndarray,
+    image_count: int,
+    x_axis: str,
+    frame_rate: float,
+) -> np.ndarray:
+    frames = np.asarray(frames, dtype=np.int64)
+    if x_axis == "time":
+        if "timestamp_robot" in obs:
+            robot_ts = np.asarray(obs["timestamp_robot"][:], dtype=np.float64)
+            xs = robot_ts[frames] - robot_ts[frames[0]]
+        else:
+            xs = (frames - frames[0]).astype(np.float32) / max(float(frame_rate), 1e-9)
+        return np.asarray(xs, dtype=np.float32)
+    return frames.astype(np.float32) / float(max(image_count - 1, 1))
 
 
 def resolve_demo_name(h5: h5py.File, demo: str) -> str:
@@ -2903,6 +3275,8 @@ def plot_demo_timeseries_command(args: argparse.Namespace) -> None:
         image_key=image_key,
         wrench_key=wrench_key,
     )
+    image_key = index.image_key
+    wrench_key = index.wrench_key
 
     with h5py.File(hdf5_path, "r") as h5:
         demo_name = resolve_demo_name(h5, args.demo)
@@ -2939,10 +3313,18 @@ def plot_demo_timeseries_command(args: argparse.Namespace) -> None:
     pred_chunks = []
     use_tcp = checkpoint_uses_tcp(checkpoint)
     with h5py.File(hdf5_path, "r") as h5:
-        obs = h5["data"][demo_name]["observations"]
-        robot_ts = np.asarray(obs["timestamp_robot"][:], dtype=np.float64)
-        times = robot_ts[frames]
-        times = times - times[0]
+        obs, _ = get_observation_group(
+            h5["data"][demo_name],
+            index.dataset_format,
+        )
+        image_count = int(obs[image_key].shape[0])
+        times = x_values_for_frames(
+            obs=obs,
+            frames=frames,
+            image_count=image_count,
+            x_axis="time",
+            frame_rate=index.frame_rate,
+        )
         for start in tqdm(
             range(0, len(frames), args.batch_size),
             desc=f"predict {demo_name}",
@@ -3109,90 +3491,43 @@ def plot_all_demo_forces(
 
 def plot_all_demo_forces_command(args: argparse.Namespace) -> None:
     args.hdf5 = resolve_hdf5_path(args, DEFAULT_HDF5)
-    force_dims = parse_dims(args.force_dims)
-    hdf5_path = str(Path(args.hdf5).expanduser())
+    index = build_index_from_args(args)
+    force_dims = index.force_dims
+    hdf5_path = index.hdf5_path
     names = dim_names(force_dims)
     demo_rows = []
-    min_samples = max(int(args.min_window_samples), 1)
 
     with h5py.File(hdf5_path, "r") as h5:
-        if "data" not in h5:
-            raise KeyError("Expected a top-level /data group in the HDF5 file.")
-        demos = sorted(h5["data"].keys(), key=demo_sort_key)
-        if args.max_demos is not None:
-            demos = demos[: args.max_demos]
-
-        for demo_name in tqdm(demos, desc="demos", dynamic_ncols=True):
-            obs = h5["data"][demo_name]["observations"]
-            required = [args.image_key, args.wrench_key, "timestamp_robot", "timestamp_wrench"]
-            missing = [key for key in required if key not in obs]
-            if missing:
-                raise KeyError(f"{demo_name} is missing observation keys: {missing}")
-
-            image_count = int(obs[args.image_key].shape[0])
-            robot_ts = np.asarray(obs["timestamp_robot"][:], dtype=np.float64)
-            wrench_ts = np.asarray(obs["timestamp_wrench"][:], dtype=np.float64)
-            if image_count != len(robot_ts):
-                raise ValueError(
-                    f"{demo_name}: {args.image_key} has {image_count} frames but "
-                    f"timestamp_robot has {len(robot_ts)} entries."
-                )
-
-            if args.limit_frames_per_demo is None or args.limit_frames_per_demo >= image_count:
-                frames = np.arange(image_count, dtype=np.int64)
-            else:
-                frames = np.unique(
-                    np.linspace(
-                        0,
-                        image_count - 1,
-                        int(args.limit_frames_per_demo),
-                        dtype=np.int64,
-                    )
-                )
-
-            wrench_series = preprocess_wrench_series(
-                raw_wrench=obs[args.wrench_key][:],
-                force_dims=force_dims,
-                wrench_ts=wrench_ts,
-                zero_wrench_start_sec=args.zero_wrench_start_sec,
-                wrench_zero_samples=args.wrench_zero_samples,
-                wrench_ema_alpha=args.wrench_ema_alpha,
-            )
-
-            xs = []
-            forces = []
-            frame_ids = []
-            for frame in frames:
-                frame = int(frame)
-                lo, hi = wrench_interval_for_image(
-                    robot_ts=robot_ts,
-                    wrench_ts=wrench_ts,
-                    frame=frame,
-                    window_sec=args.window_sec,
-                    image_force_align=args.image_force_align,
-                )
-                if hi - lo < min_samples:
-                    continue
-                forces.append(wrench_series[lo:hi].mean(axis=0).astype(np.float32))
-                frame_ids.append(frame)
-                if args.x_axis == "time":
-                    xs.append(float(robot_ts[frame] - robot_ts[0]))
-                else:
-                    xs.append(float(frame / max(image_count - 1, 1)))
-
-            if len(forces) == 0:
+        for demo_id, demo_name in enumerate(tqdm(index.demo_names, desc="demos", dynamic_ncols=True)):
+            sample_ids = np.nonzero(index.demo_idx == demo_id)[0]
+            if len(sample_ids) == 0:
                 continue
+            order = np.argsort(index.frame_idx[sample_ids])
+            sample_ids = sample_ids[order]
+            frames = index.frame_idx[sample_ids].astype(np.int64)
+            obs, _ = get_observation_group(
+                h5["data"][demo_name],
+                index.dataset_format,
+            )
+            image_count = int(obs[index.image_key].shape[0])
+            xs = x_values_for_frames(
+                obs=obs,
+                frames=frames,
+                image_count=image_count,
+                x_axis=args.x_axis,
+                frame_rate=index.frame_rate,
+            )
             demo_rows.append(
                 {
                     "demo": demo_name,
                     "x": np.asarray(xs, dtype=np.float32),
-                    "frame": np.asarray(frame_ids, dtype=np.int64),
-                    "force": np.stack(forces).astype(np.float32),
+                    "frame": frames,
+                    "force": index.target_mean[sample_ids].astype(np.float32),
                 }
             )
 
     if not demo_rows:
-        raise RuntimeError("No demo force traces were built. Check keys and timestamps.")
+        raise RuntimeError("No demo force traces were built. Check keys and filters.")
 
     output_dir = (
         Path(args.output_dir)
@@ -3212,14 +3547,18 @@ def plot_all_demo_forces_command(args: argparse.Namespace) -> None:
     )
     payload = {
         "hdf5_path": hdf5_path,
+        "dataset_format": index.dataset_format,
+        "obs_group": index.obs_group,
         "target_names": names,
-        "image_key": args.image_key,
-        "wrench_key": args.wrench_key,
+        "image_key": index.image_key,
+        "wrench_key": index.wrench_key,
         "force_dims": list(force_dims),
-        "image_force_align": args.image_force_align,
-        "window_sec": args.window_sec,
-        "wrench_zero_samples": args.wrench_zero_samples,
-        "wrench_ema_alpha": args.wrench_ema_alpha,
+        "image_force_align": index.image_force_align,
+        "window_sec": index.window_sec,
+        "wrench_zero_samples": index.wrench_zero_samples,
+        "wrench_ema_alpha": index.wrench_ema_alpha,
+        "exclude_demos": args.exclude_demos,
+        "frame_rate": index.frame_rate,
         "x_axis": args.x_axis,
         "demo_count": len(demo_rows),
         "demos": [
@@ -3376,6 +3715,8 @@ def plot_all_demo_actual_pred_command(args: argparse.Namespace) -> None:
         image_key=image_key,
         wrench_key=wrench_key,
     )
+    image_key = index.image_key
+    wrench_key = index.wrench_key
 
     image_size = int(args.image_size or checkpoint_value(checkpoint, "image_size", 224))
     crop_ratio = float(checkpoint_value(checkpoint, "image_crop_ratio", 0.95))
@@ -3385,10 +3726,13 @@ def plot_all_demo_actual_pred_command(args: argparse.Namespace) -> None:
         else bool(checkpoint_value(checkpoint, "bgr_to_rgb", True))
     )
     use_tcp = checkpoint_uses_tcp(checkpoint)
+    excluded_demos = parse_demo_filter(getattr(args, "exclude_demos", None))
 
     demo_rows = []
     with h5py.File(hdf5_path, "r") as h5:
         for demo_id, demo_name in enumerate(tqdm(index.demo_names, desc="demos", dynamic_ncols=True)):
+            if demo_name in excluded_demos:
+                continue
             if args.max_demos is not None and len(demo_rows) >= args.max_demos:
                 break
             sample_ids = np.nonzero(index.demo_idx == demo_id)[0]
@@ -3403,14 +3747,19 @@ def plot_all_demo_actual_pred_command(args: argparse.Namespace) -> None:
             if len(sample_ids) == 0:
                 continue
 
-            obs = h5["data"][demo_name]["observations"]
+            obs, _ = get_observation_group(
+                h5["data"][demo_name],
+                index.dataset_format,
+            )
             frames = index.frame_idx[sample_ids].astype(np.int64)
-            robot_ts = np.asarray(obs["timestamp_robot"][:], dtype=np.float64)
             image_count = int(obs[image_key].shape[0])
-            if args.x_axis == "time":
-                xs = robot_ts[frames] - robot_ts[frames[0]]
-            else:
-                xs = frames.astype(np.float32) / float(max(image_count - 1, 1))
+            xs = x_values_for_frames(
+                obs=obs,
+                frames=frames,
+                image_count=image_count,
+                x_axis=args.x_axis,
+                frame_rate=index.frame_rate,
+            )
             actual = index.target_mean[sample_ids].astype(np.float32)
             rotations = None
             if force_frame == "world":
@@ -3507,12 +3856,15 @@ def plot_all_demo_actual_pred_command(args: argparse.Namespace) -> None:
     payload = {
         "checkpoint": str(args.checkpoint),
         "hdf5_path": str(hdf5_path),
+        "dataset_format": index.dataset_format,
+        "obs_group": index.obs_group,
         "target_names": names,
         "force_frame": force_frame,
         "wrench_frame": wrench_frame,
         "image_key": image_key,
         "wrench_key": wrench_key,
         "x_axis": args.x_axis,
+        "exclude_demos": getattr(args, "exclude_demos", None),
         "demo_count": len(demo_rows),
         "demos": [
             {
@@ -3544,6 +3896,15 @@ def add_data_args(parser: argparse.ArgumentParser) -> None:
         dest="hdf5",
         default=DEFAULT_HDF5,
         help="Input HDF5 dataset path.",
+    )
+    parser.add_argument(
+        "--dataset-format",
+        choices=("auto", "common", "diffusion"),
+        default="auto",
+        help=(
+            "HDF5 layout. common uses /data/demo/observations with timestamps; "
+            "diffusion uses /data/demo/obs with per-frame wrench history."
+        ),
     )
     parser.add_argument("--image-key", default="image_R", help="Observation image key.")
     parser.add_argument(
@@ -3635,10 +3996,21 @@ def add_data_args(parser: argparse.ArgumentParser) -> None:
         help="Use only the first N demos, useful for quick tests.",
     )
     parser.add_argument(
+        "--exclude-demos",
+        default=None,
+        help="Comma or space separated demos to skip, e.g. '100,101'.",
+    )
+    parser.add_argument(
         "--limit-frames-per-demo",
         type=int,
         default=None,
         help="Use at most N evenly spaced image frames per demo.",
+    )
+    parser.add_argument(
+        "--frame-rate",
+        type=float,
+        default=10.0,
+        help="Image frame rate used for diffusion HDF5 time axes when timestamps are absent.",
     )
 
 
@@ -3799,8 +4171,11 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument(
         "--bgr-to-rgb",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Convert common-data BGR images to RGB.",
+        default=None,
+        help=(
+            "Convert BGR images to RGB. Defaults to true for common HDF5 and "
+            "false for diffusion HDF5."
+        ),
     )
     train.add_argument(
         "--color-jitter",
@@ -4128,6 +4503,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use at most N selected frames from each demo.",
     )
     actual_pred_plot.add_argument("--max-demos", type=int, default=None)
+    actual_pred_plot.add_argument(
+        "--exclude-demos",
+        default=None,
+        help="Comma or space separated demos to skip, e.g. '100,101'.",
+    )
     actual_pred_plot.add_argument(
         "--no-mean",
         action="store_true",

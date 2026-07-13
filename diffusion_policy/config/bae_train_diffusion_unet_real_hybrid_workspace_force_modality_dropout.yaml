@@ -1,0 +1,13 @@
+defaults:
+  - bae_train_diffusion_unet_real_hybrid_workspace_force
+  - _self_
+
+name: box_insert_virtual_hand_action_modality_dropout
+exp_name: force_modality_dropout
+
+policy:
+  force_regularization:
+    # Masks each shortcut independently per sample; wrench is never masked.
+    vision_dropout_prob: 0.2
+    low_dim_dropout_prob: 0.2
+    aux_next_wrench_weight: 0.0

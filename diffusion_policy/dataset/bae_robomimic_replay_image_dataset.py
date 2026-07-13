@@ -53,7 +53,20 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
             seed=42,
             val_ratio=0.0,
             pose_repr: dict={}, #차이
+            future_wrench_steps=0,
         ):
+        future_wrench_steps = int(future_wrench_steps)
+        if future_wrench_steps < 0:
+            raise ValueError(
+                f"future_wrench_steps must be non-negative, got {future_wrench_steps}")
+        if future_wrench_steps > 0 and n_obs_steps is None:
+            raise ValueError(
+                "future_wrench_steps requires an explicit n_obs_steps")
+        if n_obs_steps is not None \
+                and n_obs_steps + future_wrench_steps > horizon:
+            raise ValueError(
+                "n_obs_steps + future_wrench_steps must not exceed horizon")
+
         rotation_transformer = RotationTransformer(
             from_rep='axis_angle', to_rep=rotation_rep)
 
@@ -116,8 +129,10 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
         key_first_k = dict()
         if n_obs_steps is not None:
             # only take first k obs from images
-            for key in rgb_keys + wrench_keys + lowdim_keys:
+            for key in rgb_keys + lowdim_keys:
                 key_first_k[key] = n_obs_steps   # key_first_k[image0]=2, k[image1]=2, k[low_dim0]=2 ...
+            for key in wrench_keys:
+                key_first_k[key] = n_obs_steps + future_wrench_steps
 
         val_mask = get_val_mask(
             n_episodes=replay_buffer.n_episodes, 
@@ -140,6 +155,7 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
         self.wrench_keys = wrench_keys
         self.abs_action = abs_action
         self.n_obs_steps = n_obs_steps
+        self.future_wrench_steps = future_wrench_steps
         self.train_mask = train_mask
         self.horizon = horizon
         self.pad_before = pad_before
@@ -337,8 +353,13 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
             obs_dict[key] = data[key][T_slice].astype(np.float32)
             del data[key]
 
+        future_wrench_dict = dict()
         for key in self.wrench_keys:
             obs_dict[key] = data[key][T_slice][-1:].astype(np.float32) # wrench n_obs = 1
+            if self.future_wrench_steps > 0:
+                start = self.n_obs_steps
+                stop = start + self.future_wrench_steps
+                future_wrench_dict[key] = data[key][start:stop].astype(np.float32)
 
 
 
@@ -447,6 +468,9 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
             'obs': dict_apply(obs_dict, torch.from_numpy), # abs: quat(4) / relative: rot6d(6)
             'action': torch.from_numpy(data['action'].astype(np.float32)) # pos(3), rot6d(6), hand(?)
         }
+        if self.future_wrench_steps > 0:
+            torch_data['future_wrench'] = dict_apply(
+                future_wrench_dict, torch.from_numpy)
         return torch_data
 
 # Action이 axis_angle 일때 rotation_6d로 변환

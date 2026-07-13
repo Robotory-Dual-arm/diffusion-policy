@@ -1,0 +1,17 @@
+defaults:
+  - bae_train_diffusion_unet_real_hybrid_workspace_force
+  - _self_
+
+name: box_insert_virtual_hand_action_aux_next_wrench
+exp_name: force_aux_next_wrench
+
+task:
+  dataset:
+    # One 10 Hz step after the current observation; no HDF5 rewrite is needed.
+    future_wrench_steps: 1
+
+policy:
+  force_regularization:
+    vision_dropout_prob: 0.0
+    low_dim_dropout_prob: 0.0
+    aux_next_wrench_weight: 0.05
