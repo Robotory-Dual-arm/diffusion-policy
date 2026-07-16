@@ -1,0 +1,64 @@
+name: bbbae_dualarm_erase_board_no_wrench_predict_wrench
+
+image_shape: [3, 224, 224]
+dataset_path: data/baetae/260628_erase_board/diffusion_data_erase_board_actual_action.hdf5
+
+# relative
+low_dim_obs_horizon: 2
+img_obs_horizon: 2
+action_horizon: 16
+ignore_proprioception: False
+
+shape_meta: &shape_meta
+  obs:
+    image0:
+      shape: [3, 224, 224]
+      type: rgb
+      horizon: ${task.img_obs_horizon}
+
+    robot_pose_R:
+      shape: [3]
+      type: low_dim
+      horizon: ${task.low_dim_obs_horizon}
+
+    robot_quat_R:
+      shape: [4]
+      type: low_dim
+      horizon: ${task.low_dim_obs_horizon}
+      rotation_rep: rotation_6d
+
+  action:
+    # command_dim is the robot action. aux_dim is predicted wrist wrench.
+    shape: [15] # robot_pose_R[3] + robot_rot6d_R[6] + wrench_wrist_R[6]
+    command_dim: 9
+    aux_dim: 6
+    horizon: ${task.action_horizon}
+    rotation_rep: rotation_6d
+
+pose_repr: &pose_repr
+  obs_pose_repr: abs
+  action_pose_repr: relative
+
+env_runner:
+  _target_: diffusion_policy.env_runner.real_pusht_image_runner.RealPushTImageRunner
+
+dataset:
+  _target_: diffusion_policy.dataset.bae_robomimic_replay_image_dataset.BaeRobomimicReplayDataset
+  shape_meta: *shape_meta
+  dataset_path: ${task.dataset_path}
+  horizon: ${horizon}
+  pad_before: ${eval:'${n_obs_steps}-1'}
+  pad_after: ${eval:'${n_action_steps}-1'}
+  n_obs_steps: ${dataset_obs_steps}
+  use_cache: True
+  seed: 42
+  val_ratio: 0.00
+  pose_repr: *pose_repr
+
+  # Wrench is not an observation for this task. It is appended to the action
+  # training target after the robot command dimensions.
+  action_aux_dim: ${task.shape_meta.action.aux_dim}
+  action_target_obs_keys: [wrench_wrist_R]
+  action_target_obs_history_index: -1
+  action_target_obs_shift: 1
+  action_target_obs_components: null

@@ -20,6 +20,7 @@ slow_ckpt_path: ${task.slow_ckpt_path}
 task:
   dataset:
     _target_: diffusion_policy.residual_policy.step_dataset.FastResidualContextStepDataset
+    temporal_lowdim_keys: ${oc.select:task.step_low_dim_keys,null}
 
 policy:
   _target_: diffusion_policy.residual_policy.temporal_step_policy.FastResidualTemporalPolicy
@@ -37,6 +38,7 @@ policy:
   train_force_encoder: ${task.fast_force_encoder.train_force_encoder}
   include_initial_wrench: False
   force_encoder_cfg: ${task.fast_force_encoder.force_encoder_cfg}
+  step_low_dim_keys: ${oc.select:task.step_low_dim_keys,null}
 
 ema:
   _target_: diffusion_policy.model.diffusion.ema_model.EMAModel
@@ -77,7 +79,7 @@ training:
   num_epochs: 500
   gradient_accumulate_every: 1
   use_ema: True
-  checkpoint_every: 50
+  checkpoint_every: 100
   val_every: 20
   sample_every: 5
   max_train_steps: null

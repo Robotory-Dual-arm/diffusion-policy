@@ -129,25 +129,35 @@ class Dualarm(Node):
         self.right_joint_name = [f"right_joint_{i}" for i in range(1,7)]
         self.dsr_joint_name = [f"joint_{i}" for i in range(1,7)]
         self.joint_name_debug_printed = False
-        
-        # self.hand_name = [f"left_thumb_joint{i}" for i in range(1,4)] + \
-        #                  [f"left_index_joint{i}" for i in range(1,4)] + \
-        #                  [f"left_middle_joint{i}" for i in range(1,4)] + \
-        #                  [f"left_ring_joint{i}" for i in range(1,4)] + \
-        #                  [f"left_baby_joint{i}" for i in range(1,4)] + \
-        #                  [f"right_thumb_joint{i}" for i in range(1,4)] + \
-        #                  [f"right_index_joint{i}" for i in range(1,4)] + \
-        #                  [f"right_middle_joint{i}" for i in range(1,4)] + \
-        #                  [f"right_ring_joint{i}" for i in range(1,4)] + \
-        #                  [f"right_baby_joint{i}" for i in range(1,4)]
+        self.hand_feedback_debug_printed = False
+        self.latest_arm_feedback_time = None
+        self.latest_hand_feedback_time = None
 
-        # self.use_left_hand_index = [0,1,2,4,7,10] 0-14
-        # self.use_right_hand_index = [15,16,17,19,20,22,23,25,26,28,29] # 15-29
+        # Keep the exact seven right-hand joints used by the hand7 datasets
+        # and dualarm hand controller: thumb3 + index2 + middle2.
+        self.hand_name = [f"left_thumb_joint{i}" for i in range(1,4)] + \
+                         [f"left_index_joint{i}" for i in range(1,4)] + \
+                         [f"left_middle_joint{i}" for i in range(1,4)] + \
+                         [f"left_ring_joint{i}" for i in range(1,4)] + \
+                         [f"left_baby_joint{i}" for i in range(1,4)] + \
+                         [f"right_thumb_joint{i}" for i in range(1,4)] + \
+                         [f"right_index_joint{i}" for i in range(1,4)] + \
+                         [f"right_middle_joint{i}" for i in range(1,4)] + \
+                         [f"right_ring_joint{i}" for i in range(1,4)] + \
+                         [f"right_baby_joint{i}" for i in range(1,4)]
+        self.use_right_hand_index = [15, 16, 17, 19, 20, 22, 23]
 
         self.joint_subscriber = self.create_subscription(
             JointState,
-            '/joint_states',
+            '/dsr01/joint_states',
             self.joint_callback,
+            10,
+            callback_group=self.callback_group
+        )
+        self.hand_subscriber = self.create_subscription(
+            JointState,
+            '/joint_states',
+            self.hand_callback,
             10,
             callback_group=self.callback_group
         )
@@ -212,11 +222,11 @@ class Dualarm(Node):
             '/right_dsr_controller/task_space_command',
             10
         )
-        # self.hand_command_publisher = self.create_publisher(
-        #     JointState,
-        #     '/aidin_dualarm_joint_controller/joint_state_command',
-        #     10
-        # )
+        self.hand_command_publisher = self.create_publisher(
+            JointState,
+            '/aidin_dualarm_joint_controller/joint_state_command',
+            10
+        )
         
         # trajectory 확인용
         self.tcp_publisher_R = self.create_publisher(
@@ -228,34 +238,70 @@ class Dualarm(Node):
         print(f"[Control] right arm control mode: {control_name}")
 
     def joint_callback(self, msg):
-        global latest_joint_R, latest_hand_R
+        global latest_joint_R
     
         joint_mapping = {n: p for n, p in zip(msg.name, msg.position)}
-        joint_position = [joint_mapping.get(j) for j in self.right_joint_name]
+        joint_position = [joint_mapping.get(j) for j in self.dsr_joint_name]
         if any(x is None for x in joint_position):
-            joint_position = [joint_mapping.get(j) for j in self.dsr_joint_name]
+            joint_position = [joint_mapping.get(j) for j in self.right_joint_name]
 
         if any(x is None for x in joint_position):
-            if len(msg.position) == 6:
-                joint_position = list(msg.position)
-            else:
+            if len(msg.position) >= 6:
+                joint_position = list(msg.position[:6])
                 if not self.joint_name_debug_printed:
-                    print(f"[WARN] Cannot map right arm joints from /joint_states names: {list(msg.name)}")
+                    print(
+                        "[WARN] /dsr01/joint_states lacks named right arm "
+                        f"joints; using first six positions. names={list(msg.name)}"
+                    )
                     self.joint_name_debug_printed = True
-                return
 
         joint_position = np.asarray(joint_position, dtype=np.float64)
-        if joint_position.shape != (6,) or not np.all(np.isfinite(joint_position)):
-            if not self.joint_name_debug_printed:
-                print(f"[WARN] Invalid right arm joint positions: {joint_position}")
-                self.joint_name_debug_printed = True
-            return
+        if joint_position.shape == (6,) and np.all(np.isfinite(joint_position)):
+            self.latest_arm_feedback_time = time.time()
+            latest_joint_R = joint_position
+        elif not self.joint_name_debug_printed:
+            print(f"[WARN] Invalid right arm joint positions: {joint_position}")
+            self.joint_name_debug_printed = True
 
-        latest_joint_R = joint_position
-        # hand_position = [joint_mapping.get(j) for j in self.hand_name]
-        # latest_joint_L = joint_position[:6]
-        # latest_hand_L = hand_position[0:3] + hand_position[4:6] + hand_position[7:9]
-        # latest_hand_R = np.array([hand_position[i] for i in self.use_right_hand_index])
+    def hand_callback(self, msg):
+        global latest_joint_R, latest_hand_R
+
+        joint_mapping = {n: p for n, p in zip(msg.name, msg.position)}
+        # Some deployments aggregate named arm and hand states onto
+        # /joint_states. Accept that duplicate arm source without applying the
+        # unsafe first-six fallback to a hand-only 30-joint message.
+        for candidate_names in (self.dsr_joint_name, self.right_joint_name):
+            if all(name in joint_mapping for name in candidate_names):
+                candidate = np.asarray(
+                    [joint_mapping[name] for name in candidate_names],
+                    dtype=np.float64,
+                )
+                if candidate.shape == (6,) and np.all(np.isfinite(candidate)):
+                    self.latest_arm_feedback_time = time.time()
+                    latest_joint_R = candidate
+                break
+
+        selected_names = [
+            self.hand_name[index] for index in self.use_right_hand_index
+        ]
+        selected_hand = [joint_mapping.get(name) for name in selected_names]
+        if all(value is not None for value in selected_hand):
+            selected_hand = np.asarray(selected_hand, dtype=np.float64)
+            if selected_hand.shape == (7,) and np.all(np.isfinite(selected_hand)):
+                self.latest_hand_feedback_time = time.time()
+                latest_hand_R = selected_hand
+            elif not self.hand_feedback_debug_printed:
+                print(f"[WARN] Invalid right hand7 feedback: {selected_hand}")
+                self.hand_feedback_debug_printed = True
+        elif any(name in joint_mapping for name in selected_names):
+            if not self.hand_feedback_debug_printed:
+                missing = [
+                    name
+                    for name, value in zip(selected_names, selected_hand)
+                    if value is None
+                ]
+                print(f"[WARN] Missing right hand7 feedback joints: {missing}")
+                self.hand_feedback_debug_printed = True
     
     # def wrench_wrist_L_callback(self, msg):
     #     global latest_wrench_wrist_L
@@ -404,13 +450,18 @@ class Dualarm(Node):
         msg.pose.orientation.w = float(quat[3])
         self.task_space_command_publisher_R.publish(msg)
 
-    # def hand_command_publish(self, hand_position):
-    #     msg = JointState()
-    #     msg.name = self.hand_name
-    #     hand_data = np.zeros(30, dtype=float)
-    #     hand_data[self.use_right_hand_index] = [float(x) for x in hand_position[:]]
-    #     msg.position = hand_data.tolist()
-    #     self.hand_command_publisher.publish(msg)
+    def hand_command_publish(self, hand_position):
+        hand_position = np.asarray(hand_position, dtype=np.float64)
+        if hand_position.shape != (7,) or not np.all(np.isfinite(hand_position)):
+            raise ValueError(
+                f"Right hand command must be finite hand7, got {hand_position}"
+            )
+        msg = JointState()
+        msg.name = self.hand_name
+        hand_data = np.zeros(30, dtype=float)
+        hand_data[self.use_right_hand_index] = hand_position
+        msg.position = hand_data.tolist()
+        self.hand_command_publisher.publish(msg)
 
     # trajectory 확인용
     def tcp_pose_publish_R(self, tcp_pose):
@@ -574,6 +625,21 @@ class DualarmInterpolationController(mp.Process):
         if joints_init is not None:   # None
             joints_init = np.array(joints_init)
             assert joints_init.shape == (6,)
+        if shape_meta is None:
+            raise ValueError("Insert-plug hand controller requires shape_meta")
+        action_shape = tuple(shape_meta.get('action', {}).get('shape', ()))
+        if action_shape != (16,):
+            raise ValueError(
+                "Insert-plug hand controller requires action16 "
+                f"(pose9 + hand7), got {action_shape}"
+            )
+        hand_shape = tuple(
+            shape_meta.get('obs', {}).get('hand_pose_R', {}).get('shape', ())
+        )
+        if hand_shape != (7,):
+            raise ValueError(
+                f"Insert-plug hand feedback must be hand7, got {hand_shape}"
+            )
 
         super().__init__(name="RTDEPositionalController") 
         self.robot_ip = robot_ip
@@ -621,7 +687,7 @@ class DualarmInterpolationController(mp.Process):
                     'robot_pose_R',
                     'robot_quat_R',
                     # 'hand_pose_L',
-                    # 'hand_pose_R',
+                    'hand_pose_R',
                     'wrench_wrist_R',
                     'wrench_thumb_R',
                     'wrench_index_R',
@@ -634,7 +700,7 @@ class DualarmInterpolationController(mp.Process):
         default_obs_shapes = {
             'robot_pose_R': (3,),
             'robot_quat_R': (4,),
-            # 'hand_pose_R': (11,),
+            'hand_pose_R': (7,),
             'wrench_wrist_R': (6, 32),
             'wrench_thumb_R': (1, 32),
             'wrench_index_R': (1, 32),
@@ -699,8 +765,12 @@ class DualarmInterpolationController(mp.Process):
             self.stop_wait()
 
     def start_wait(self):
-        self.ready_event.wait(self.launch_timeout)
-        assert self.is_alive()
+        if not self.ready_event.wait(self.launch_timeout):
+            raise TimeoutError(
+                "Insert-plug controller did not receive initial arm/hand feedback"
+            )
+        if not self.is_alive():
+            raise RuntimeError("Insert-plug controller exited during startup")
     
     def stop_wait(self):  
         self.join()
@@ -753,10 +823,8 @@ class DualarmInterpolationController(mp.Process):
         urdf_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "m0609.white.urdf"))
         doosan_robot = rtb.ERobot.URDF(urdf_path)   
 
-        # global latest_joint_R, latest_hand_R
-        # latest_joint_R, latest_hand_R = None, None
-        global latest_joint_R
-        latest_joint_R = None
+        global latest_joint_R, latest_hand_R
+        latest_joint_R, latest_hand_R = None, None
 
         global latest_wrench_wrist_R, latest_wrench_fingers_R
         global latest_wrench_thumb_R, latest_wrench_index_R, latest_wrench_middle_R, latest_wrench_ring_R, latest_wrench_baby_R
@@ -773,8 +841,19 @@ class DualarmInterpolationController(mp.Process):
 
         try:
             print("[DEBUG] Waiting for initial data...")
-            while latest_joint_R is None:
+            initial_data_deadline = time.monotonic() + self.launch_timeout
+            while latest_joint_R is None or latest_hand_R is None:
                 executor.spin_once(timeout_sec=0.01)
+                if time.monotonic() >= initial_data_deadline:
+                    missing = []
+                    if latest_joint_R is None:
+                        missing.append("right arm joints")
+                    if latest_hand_R is None:
+                        missing.append("right hand7 joints")
+                    raise RuntimeError(
+                        "Timed out waiting for initial feedback: "
+                        + ", ".join(missing)
+                    )
             print("[DEBUG] All initial data received!")
          
             # main loop
@@ -783,7 +862,7 @@ class DualarmInterpolationController(mp.Process):
             # curr_joint_L = latest_joint_L
             curr_joint_R = latest_joint_R
             # curr_hand_L = latest_hand_L
-            # curr_hand_R = latest_hand_R
+            curr_hand_R = latest_hand_R
 
             # curr_tcp_L = doosan_robot.fkine(curr_joint_L)
             curr_tcp_R = doosan_robot.fkine(curr_joint_R)
@@ -804,8 +883,11 @@ class DualarmInterpolationController(mp.Process):
             # curr_tcp_rotvec_L = R.from_quat(curr_tcp_quat_L).as_rotvec()
             curr_tcp_rotvec_R = R.from_quat(curr_tcp_quat_R).as_rotvec()
 
-            # curr_pose = np.concatenate([curr_tcp_pose_L, curr_tcp_rotvec_L, curr_tcp_pose_R, curr_tcp_rotvec_R, curr_hand_L, curr_hand_R])
-            curr_pose = np.concatenate([curr_tcp_pose_R, curr_tcp_rotvec_R])
+            curr_pose = np.concatenate([
+                curr_tcp_pose_R,
+                curr_tcp_rotvec_R,
+                curr_hand_R,
+            ])
             print("[DEBUG] curr_pose:", curr_pose)
             # use monotonic time to make sure the control loop never go backward
             curr_t = time.monotonic()
@@ -813,7 +895,7 @@ class DualarmInterpolationController(mp.Process):
             pose_interp = PoseTrajectoryInterpolator(  
                 times=[curr_t],     # [ time ]
                 poses=[curr_pose],  # [ [x,y,z,rx,ry,rz] ]
-                action_type='rightarm'
+                action_type='rightarm_hand'
             )
 
             iter_idx = 0
@@ -849,7 +931,7 @@ class DualarmInterpolationController(mp.Process):
                 else:
                     target_joint_R = servoJ(doosan_robot, latest_joint_R, target_R)
                     node.joint_command_publish_R(target_joint_R)
-                # node.hand_command_publish(np.concatenate([target_hand_R]))   
+                node.hand_command_publish(target_hand_R)
 
                 # trajectory 확인용
                 # node.tcp_pose_publish_R(target_pose_R)
@@ -858,7 +940,7 @@ class DualarmInterpolationController(mp.Process):
                 # curr_joint_L = latest_joint_L
                 curr_joint_R = latest_joint_R
                 # curr_hand_L = latest_hand_L
-                # curr_hand_R = latest_hand_R
+                curr_hand_R = latest_hand_R
 
                 # curr_tcp_L = doosan_robot.fkine(curr_joint_L)
                 curr_tcp_R = doosan_robot.fkine(curr_joint_R)
@@ -897,12 +979,19 @@ class DualarmInterpolationController(mp.Process):
                         state[key] = np.array(curr_tcp_quat_R)
                     # elif key == 'hand_pose_L':
                     #     state[key] = np.array(curr_hand_L)
-                    # elif key == 'hand_pose_R':
-                    #     state[key] = np.array(curr_hand_R)
+                    elif key == 'hand_pose_R':
+                        state[key] = np.array(curr_hand_R)
                     elif key in wrench_state:
                         state[key] = np.array(wrench_state[key], dtype=np.float64)
                     
-                state['robot_receive_timestamp'] = time.time()
+                # Preserve the existing timestamp field but make it represent
+                # the oldest required proprioceptive source. If either arm or
+                # hand feedback stops, the real-env freshness check now ages
+                # out instead of being refreshed by the control loop itself.
+                state['robot_receive_timestamp'] = min(
+                    node.latest_arm_feedback_time,
+                    node.latest_hand_feedback_time,
+                )
                 self.ring_buffer.put(state)   
 
                 # fetch command from queue
@@ -935,9 +1024,18 @@ class DualarmInterpolationController(mp.Process):
 
                         target_position_R = target_pose[0:3]   # 3d position, m
                         target_rotvec_R = rot6d_to_rotvec(target_pose[3:9])   # 6d rotation -> rot_vec
-                        # target_hand_R = target_pose[9:]
+                        target_hand_R = target_pose[9:]
+                        if target_hand_R.shape != (7,) or not np.all(np.isfinite(target_hand_R)):
+                            raise ValueError(
+                                "Insert-plug controller requires finite action16 "
+                                f"(pose9 + hand7), got target shape {target_pose.shape}"
+                            )
 
-                        target_pose = np.concatenate([target_position_R, target_rotvec_R])   # (15,)
+                        target_pose = np.concatenate([
+                            target_position_R,
+                            target_rotvec_R,
+                            target_hand_R,
+                        ])  # pose6 + hand7 = 13
                         print("[DEBUG] target_pose: ", target_pose)
 
                         if cmd_index < 12:
@@ -957,7 +1055,7 @@ class DualarmInterpolationController(mp.Process):
                             max_rot_speed=self.max_rot_speed,
                             curr_time=curr_time,
                             last_waypoint_time=last_waypoint_time,
-                            action_type='rightarm'
+                            action_type='rightarm_hand'
                         )
                         last_waypoint_time = target_time
                     else:
@@ -980,8 +1078,6 @@ class DualarmInterpolationController(mp.Process):
             # terminate
             node.destroy_node()
             rclpy.shutdown()
-
-            self.ready_event.set()
 
             if self.verbose:
                 print(f"[RTDEPositionalController] Disconnected from robot: {robot_ip}")

@@ -117,10 +117,18 @@ class FastResidualContextStepPolicy(BaseImagePolicy):
                 self.force_encoder.requires_grad_(True)
             elif freeze_force_encoder:
                 self.force_encoder.requires_grad_(False)
-        self.low_dim_keys = [
+        slow_low_dim_keys = [
             key for key in getattr(slow_policy, "low_dim_keys", [])
             if key in shape_meta["obs"] and key != base_action_key
         ]
+        shape_low_dim_keys = [
+            key for key, attr in shape_meta["obs"].items()
+            if attr.get("type", "low_dim") == "low_dim" and key != base_action_key
+        ]
+        self.low_dim_keys = []
+        for key in slow_low_dim_keys + shape_low_dim_keys:
+            if key not in self.low_dim_keys:
+                self.low_dim_keys.append(key)
         if len(self.rgb_keys) == 0:
             raise ValueError("Context-step residual policy needs at least one rgb key")
 

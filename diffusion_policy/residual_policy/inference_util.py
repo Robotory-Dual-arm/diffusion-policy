@@ -50,7 +50,7 @@ def predict_slow_fast_residual_action(
         slow_action_index=0,
         slow_action_key=None,
         slow_action_pose_repr="relative"):
-    """Run slow policy, fast residual policy, and compose final absolute pose9.
+    """Run both policies and correct slow EE pose9 while preserving its action tail.
 
     Args:
         obs_dict: preprocessed torch obs used by the slow policy.
@@ -58,16 +58,18 @@ def predict_slow_fast_residual_action(
             only the latest pose is used as the relative-action base.
 
     Returns:
-        dict with final absolute pose command and intermediate terms.
+        dict with the final absolute command (pose9 plus any slow-owned tail)
+        and intermediate terms.
     """
     slow_result = slow_policy.predict_action(obs_dict)
     slow_action = slow_result["action"][:, slow_action_index]
+    slow_ee_action = slow_action[..., :9]
     if slow_action_key is None:
         slow_action_key = getattr(fast_policy, "slow_action_key", "slow_action_rel")
 
     fast_obs = attach_slow_action_to_obs(
         obs_dict=obs_dict,
-        slow_action_rel=slow_action,
+        slow_action_rel=slow_ee_action,
         slow_action_key=slow_action_key,
         n_obs_steps=fast_policy.n_obs_steps,
     )
@@ -82,7 +84,10 @@ def predict_slow_fast_residual_action(
     final_abs = []
     for i in range(slow_action_np.shape[0]):
         if slow_action_pose_repr == "relative":
-            this_slow_abs = relative_pose9_to_abs_pose9(base_pose9, slow_action_np[i])
+            this_slow_abs_pose9 = relative_pose9_to_abs_pose9(base_pose9, slow_action_np[i, :9])
+            this_slow_abs = np.concatenate(
+                [this_slow_abs_pose9, slow_action_np[i, 9:]], axis=-1
+            )
         elif slow_action_pose_repr == "abs":
             this_slow_abs = slow_action_np[i]
         else:

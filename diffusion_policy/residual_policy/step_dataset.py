@@ -56,6 +56,8 @@ class FastResidualContextStepDataset(BaseImageDataset):
             action_key="obs/residual_delta6_gt_actual_to_virtual",
             action_target_shift=0,
             base_action_target_shift=None,
+            prev_action_key=None,
+            prev_action_valid_key=None,
             n_obs_steps=16,
             use_cache=False,
             seed=42,
@@ -76,6 +78,8 @@ class FastResidualContextStepDataset(BaseImageDataset):
             action_key=action_key,
             action_target_shift=action_target_shift,
             base_action_target_shift=base_action_target_shift,
+            prev_action_key=prev_action_key,
+            prev_action_valid_key=prev_action_valid_key,
         )
 
         rgb_keys = []
@@ -113,6 +117,8 @@ class FastResidualContextStepDataset(BaseImageDataset):
         self.lowdim_keys = lowdim_keys
         self.wrench_keys = wrench_keys
         self.base_action_key = base_action_key
+        self.prev_action_key = prev_action_key
+        self.prev_action_valid_key = prev_action_valid_key
         self.action_target_shift = int(action_target_shift)
         self.n_obs_steps = n_obs_steps
         self.train_mask = train_mask
@@ -217,6 +223,10 @@ class FastResidualContextStepDataset(BaseImageDataset):
                     parts.append(
                         get_range_normalizer_from_stat(array_to_stats(data_cache[key][..., 9:])))
                 this_normalizer = concatenate_normalizer(parts)
+            elif key == self.prev_action_key:
+                this_normalizer = get_range_normalizer_from_stat(stat)
+            elif key == self.prev_action_valid_key:
+                this_normalizer = get_identity_normalizer_from_stat(stat)
             elif key.endswith("quat") or "quat" in key:
                 this_normalizer = get_identity_normalizer_from_stat(stat)
             elif key.endswith("pos") or "pose" in key:
@@ -362,6 +372,19 @@ def _episode_current_pose9(episode):
     raise KeyError("Need robot_pose_{R/L} and robot_quat_{R/L} to rebuild shifted base_action_rel")
 
 
+def _previous_action_for_shifted_targets(action, action_target_shift):
+    action = np.asarray(action, dtype=np.float32)
+    action_target_shift = int(action_target_shift)
+    target_indices = np.arange(action_target_shift, len(action), dtype=np.int64)
+    prev_indices = target_indices - 1
+
+    prev_action = np.zeros((len(target_indices),) + action.shape[1:], dtype=np.float32)
+    valid = (prev_indices >= 0).astype(np.float32)[:, None]
+    if np.any(prev_indices >= 0):
+        prev_action[prev_indices >= 0] = action[prev_indices[prev_indices >= 0]]
+    return prev_action, valid
+
+
 def _convert_step_hdf5_to_replay(
         store,
         shape_meta,
@@ -371,7 +394,9 @@ def _convert_step_hdf5_to_replay(
         base_action_abs_source_key,
         action_key,
         action_target_shift=0,
-        base_action_target_shift=None):
+        base_action_target_shift=None,
+        prev_action_key=None,
+        prev_action_valid_key=None):
     root = zarr.group(store=store)
     replay_buffer = ReplayBuffer.create_from_group(root)
     obs_meta = shape_meta["obs"]
@@ -395,9 +420,16 @@ def _convert_step_hdf5_to_replay(
             demo = data_group[demo_name]
             episode = {}
             for key in obs_meta:
-                if key != base_action_key:
+                if key not in (base_action_key, prev_action_key, prev_action_valid_key):
                     episode[key] = _read_demo_dataset(demo, key)
             action = _read_demo_dataset(demo, action_key)
+            prev_action = None
+            prev_action_valid = None
+            if prev_action_key is not None:
+                prev_action, prev_action_valid = _previous_action_for_shifted_targets(
+                    action,
+                    action_target_shift,
+                )
 
             if base_action_target_shift > 0:
                 if base_action_abs_source_key is None:
@@ -433,6 +465,10 @@ def _convert_step_hdf5_to_replay(
                 }
                 action = action[action_target_shift:]
             episode[base_action_key] = base_action
+            if prev_action_key is not None:
+                episode[prev_action_key] = prev_action
+                if prev_action_valid_key is not None:
+                    episode[prev_action_valid_key] = prev_action_valid
             episode["action"] = action
             replay_buffer.add_episode(episode)
     return replay_buffer

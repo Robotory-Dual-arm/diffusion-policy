@@ -92,9 +92,18 @@ def apply_delta6_to_pose9(base_pose9, delta6):
 
 
 def apply_residual_action_to_pose9(base_pose9, residual_action):
+    """Correct the leading EE pose9 and preserve any slow-policy action tail."""
+    base_action = _as_array(base_pose9)
+    if base_action.shape[-1] < 9:
+        raise ValueError(f"Expected base action with at least pose9, got {base_action.shape}")
+    base_pose9 = base_action[..., :9]
     residual_action = _as_array(residual_action)
     if residual_action.shape[-1] == 6:
-        return apply_delta6_to_pose9(base_pose9, residual_action)
-    if residual_action.shape[-1] == 9:
-        return relative_pose9_to_abs_pose9(base_pose9, residual_action)
-    raise ValueError(f"Expected residual action with 6 or 9 dims, got {residual_action.shape}")
+        corrected_pose9 = apply_delta6_to_pose9(base_pose9, residual_action)
+    elif residual_action.shape[-1] == 9:
+        corrected_pose9 = relative_pose9_to_abs_pose9(base_pose9, residual_action)
+    else:
+        raise ValueError(f"Expected residual action with 6 or 9 dims, got {residual_action.shape}")
+    if base_action.shape[-1] == 9:
+        return corrected_pose9
+    return np.concatenate([corrected_pose9, base_action[..., 9:]], axis=-1).astype(np.float32)

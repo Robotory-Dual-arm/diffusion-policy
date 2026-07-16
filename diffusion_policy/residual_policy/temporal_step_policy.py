@@ -62,6 +62,7 @@ class FastResidualTemporalPolicy(BaseImagePolicy):
             train_force_encoder: bool = False,
             include_initial_wrench: bool = True,
             force_encoder_cfg=None,
+            step_low_dim_keys=None,
         ):
         super().__init__()
 
@@ -113,9 +114,22 @@ class FastResidualTemporalPolicy(BaseImagePolicy):
                 self.force_encoder.requires_grad_(True)
             elif freeze_force_encoder:
                 self.force_encoder.requires_grad_(False)
-        self.low_dim_keys = [
+        all_low_dim_keys = [
             key for key in getattr(slow_policy, "low_dim_keys", [])
             if key in shape_meta["obs"] and key != base_action_key
+        ]
+        if step_low_dim_keys is None:
+            self.step_low_dim_keys = []
+        elif step_low_dim_keys == "all":
+            self.step_low_dim_keys = list(all_low_dim_keys)
+        else:
+            self.step_low_dim_keys = list(step_low_dim_keys)
+        missing_step_keys = [key for key in self.step_low_dim_keys if key not in shape_meta["obs"]]
+        if missing_step_keys:
+            raise KeyError(f"step_low_dim_keys missing from shape_meta.obs: {missing_step_keys}")
+        self.low_dim_keys = [
+            key for key in all_low_dim_keys
+            if key not in self.step_low_dim_keys
         ]
         if len(self.rgb_keys) == 0:
             raise ValueError("Temporal residual policy needs at least one rgb key")
@@ -125,8 +139,9 @@ class FastResidualTemporalPolicy(BaseImagePolicy):
         if self.vision_feature_dim is None:
             raise AttributeError("Slow policy must expose vision_feature_dim")
         low_dim = sum(shape_meta["obs"][key]["shape"][0] for key in self.low_dim_keys)
+        step_low_dim = sum(shape_meta["obs"][key]["shape"][0] for key in self.step_low_dim_keys)
         force_dim = self.force_feature_dim if len(self.wrench_keys) > 0 else 0
-        rnn_input_dim = force_dim + self.base_action_dim
+        rnn_input_dim = force_dim + self.base_action_dim + step_low_dim
         if rnn_input_dim <= 0:
             raise ValueError("Temporal residual policy needs force or base-action inputs")
 
@@ -162,13 +177,14 @@ class FastResidualTemporalPolicy(BaseImagePolicy):
         print("Fast temporal GRU params: %e" % sum(p.numel() for p in self.rnn.parameters()))
         print("Fast temporal head params: %e" % sum(p.numel() for p in self.head.parameters()))
         print(
-            "Fast temporal inputs: h0 from rgb=%s first + low_dim=%s first + wrench=%s first; recurrent wrench=%s + base_action=%s, n_obs_steps=%d"
+            "Fast temporal inputs: h0 from rgb=%s first + low_dim=%s first + wrench=%s first; recurrent wrench=%s + base_action=%s + step_low_dim=%s, n_obs_steps=%d"
             % (
                 self.rgb_keys,
                 self.low_dim_keys,
                 self.wrench_keys if self.include_initial_wrench else [],
                 self.wrench_keys,
                 self.base_action_key,
+                self.step_low_dim_keys,
                 self.n_obs_steps,
             )
         )
@@ -268,7 +284,18 @@ class FastResidualTemporalPolicy(BaseImagePolicy):
         seq_parts = []
         if force_seq is not None:
             seq_parts.append(force_seq)
-        seq_parts.append(fast_nobs[self.base_action_key])
+        base_action = fast_nobs[self.base_action_key]
+        if base_action.ndim == 2:
+            base_action = base_action[:, None]
+        seq_parts.append(base_action)
+        steps = base_action.shape[1]
+        for key in self.step_low_dim_keys:
+            value = fast_nobs[key]
+            if value.ndim == 2:
+                value = value[:, None]
+            if value.shape[1] != steps:
+                value = value[:, -steps:]
+            seq_parts.append(value)
         temporal_input = torch.cat(seq_parts, dim=-1)
         return initial_hidden, temporal_input
 

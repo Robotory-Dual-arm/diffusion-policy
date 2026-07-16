@@ -18,6 +18,7 @@ from diffusion_policy.residual_policy.pose_util import (
     apply_delta6_to_pose9,
     pose6_to_pose9,
     pose9_to_mat,
+    pose_like_to_pose9,
     relative_pose9_to_abs_pose9,
 )
 
@@ -32,8 +33,10 @@ def sorted_demo_keys(data_group):
 
 
 def pose_error(a, b):
-    mat_a = pose9_to_mat(a)
-    mat_b = pose9_to_mat(b)
+    # Paired hand datasets keep pose9 + hand in ``actions``. Validation is
+    # intentionally about the leading end-effector pose only.
+    mat_a = pose9_to_mat(pose_like_to_pose9(a))
+    mat_b = pose9_to_mat(pose_like_to_pose9(b))
     pos_err = np.linalg.norm(mat_a[..., :3, 3] - mat_b[..., :3, 3], axis=-1)
     rel = np.linalg.inv(mat_a) @ mat_b
     rot_err = Rotation.from_matrix(rel[..., :3, :3]).magnitude()

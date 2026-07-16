@@ -38,6 +38,39 @@ register_codecs()
 from diffusion_policy.model.common.pose_util import pose_to_mat, mat_to_pose10d, pose10d_to_mat
 
 
+def _as_list(value):
+    if value is None:
+        return list()
+    if isinstance(value, str):
+        return [value]
+    return list(value)
+
+
+def _get_action_target_cache_path(
+        dataset_path,
+        shape_meta,
+        action_target_obs_keys,
+        action_target_obs_history_index,
+        action_target_obs_shift,
+        action_target_obs_components):
+    if len(action_target_obs_keys) == 0:
+        return dataset_path + '.zarr.zip'
+
+    payload = {
+        'action_shape': list(shape_meta['action']['shape']),
+        'action_target_obs_keys': list(action_target_obs_keys),
+        'action_target_obs_history_index': action_target_obs_history_index,
+        'action_target_obs_shift': action_target_obs_shift,
+        'action_target_obs_components': (
+            None if action_target_obs_components is None
+            else list(action_target_obs_components)
+        ),
+    }
+    payload_json = json.dumps(payload, sort_keys=True)
+    digest = hashlib.sha1(payload_json.encode('utf-8')).hexdigest()[:10]
+    return dataset_path + f'.action_target_{digest}.zarr.zip'
+
+
 class BaeRobomimicReplayDataset(BaseImageDataset):
     def __init__(self,
             shape_meta: dict,
@@ -54,6 +87,11 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
             val_ratio=0.0,
             pose_repr: dict={}, #차이
             future_wrench_steps=0,
+            action_aux_dim=None,
+            action_target_obs_keys=None,
+            action_target_obs_history_index=-1,
+            action_target_obs_shift=0,
+            action_target_obs_components=None,
         ):
         future_wrench_steps = int(future_wrench_steps)
         if future_wrench_steps < 0:
@@ -70,9 +108,35 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
         rotation_transformer = RotationTransformer(
             from_rep='axis_angle', to_rep=rotation_rep)
 
+        action_target_obs_keys = _as_list(action_target_obs_keys)
+        action_target_obs_components = (
+            None if action_target_obs_components is None
+            else [int(x) for x in action_target_obs_components]
+        )
+        action_dim = int(shape_meta['action']['shape'][0])
+        if action_aux_dim is None:
+            action_aux_dim = int(shape_meta['action'].get('aux_dim', 0))
+        else:
+            action_aux_dim = int(action_aux_dim)
+        action_command_dim = int(
+            shape_meta['action'].get('command_dim', action_dim - action_aux_dim))
+        if action_aux_dim == 0:
+            action_aux_dim = action_dim - action_command_dim
+        if action_command_dim < 0 or action_aux_dim < 0 \
+                or action_command_dim + action_aux_dim != action_dim:
+            raise ValueError(
+                f"Invalid action split: command_dim={action_command_dim}, "
+                f"aux_dim={action_aux_dim}, action_dim={action_dim}")
+
         replay_buffer = None
         if use_cache:
-            cache_zarr_path = dataset_path + '.zarr.zip'
+            cache_zarr_path = _get_action_target_cache_path(
+                dataset_path=dataset_path,
+                shape_meta=shape_meta,
+                action_target_obs_keys=action_target_obs_keys,
+                action_target_obs_history_index=action_target_obs_history_index,
+                action_target_obs_shift=action_target_obs_shift,
+                action_target_obs_components=action_target_obs_components)
             cache_lock_path = cache_zarr_path + '.lock'
             print('Acquiring lock on cache.')
             with FileLock(cache_lock_path):
@@ -85,7 +149,11 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
                             shape_meta=shape_meta, 
                             dataset_path=dataset_path, 
                             abs_action=abs_action, 
-                            rotation_transformer=rotation_transformer)
+                            rotation_transformer=rotation_transformer,
+                            action_target_obs_keys=action_target_obs_keys,
+                            action_target_obs_history_index=action_target_obs_history_index,
+                            action_target_obs_shift=action_target_obs_shift,
+                            action_target_obs_components=action_target_obs_components)
                         print('Saving cache to disk.')
                         with zarr.ZipStore(cache_zarr_path) as zip_store:
                             replay_buffer.save_to_store(
@@ -108,7 +176,19 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
                 shape_meta=shape_meta, 
                 dataset_path=dataset_path, 
                 abs_action=abs_action, 
-                rotation_transformer=rotation_transformer)
+                rotation_transformer=rotation_transformer,
+                action_target_obs_keys=action_target_obs_keys,
+                action_target_obs_history_index=action_target_obs_history_index,
+                action_target_obs_shift=action_target_obs_shift,
+                action_target_obs_components=action_target_obs_components)
+
+        actual_action_shape = tuple(replay_buffer['action'].shape[1:])
+        expected_action_shape = tuple(shape_meta['action']['shape'])
+        if actual_action_shape != expected_action_shape:
+            raise RuntimeError(
+                f"ReplayBuffer action shape {actual_action_shape} does not match "
+                f"shape_meta action shape {expected_action_shape}. If this came "
+                f"from an old cache, remove the matching .zarr.zip cache file.")
 
         rgb_keys = list()
         lowdim_keys = list()
@@ -161,6 +241,12 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
         self.pad_before = pad_before
         self.pad_after = pad_after
         self.use_legacy_normalizer = use_legacy_normalizer 
+        self.action_aux_dim = action_aux_dim
+        self.action_command_dim = action_command_dim
+        self.action_target_obs_keys = action_target_obs_keys
+        self.action_target_obs_history_index = action_target_obs_history_index
+        self.action_target_obs_shift = action_target_obs_shift
+        self.action_target_obs_components = action_target_obs_components
         
         # relative ===============================================================
         self.pose_repr = pose_repr 
@@ -274,9 +360,22 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
             action_index += 9
 
         if self.use_left_hand or self.use_right_hand:
+            hand_end = self.action_command_dim
             action_normalizers.append(
                 get_range_normalizer_from_stat(
-                    array_to_stats(data_cache['action'][..., action_index:])))
+                    array_to_stats(data_cache['action'][..., action_index:hand_end])))
+            action_index = hand_end
+
+        if self.action_aux_dim > 0:
+            action_normalizers.append(
+                get_range_normalizer_from_stat(
+                    array_to_stats(data_cache['action'][..., self.action_command_dim:])))
+            action_index = self.action_command_dim + self.action_aux_dim
+
+        if action_index != data_cache['action'].shape[-1]:
+            raise ValueError(
+                f"Action normalizer covered {action_index} dims, "
+                f"but action has {data_cache['action'].shape[-1]} dims.")
         
         normalizer['action'] = concatenate_normalizer(action_normalizers)
 
@@ -414,6 +513,9 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
         if self.action_pose_repr == 'relative':
             relative_action_list = list()
             action_index = 0 
+            aux_action = None
+            if self.action_aux_dim > 0:
+                aux_action = data['action'][..., self.action_command_dim:]
 
             if self.use_left_arm:
                 action_relative_pose_mat_L = convert_pose_mat_rep(
@@ -435,7 +537,7 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
                 relative_action_list.append(action_relative_pose_R.astype(np.float32))
                 action_index += 9
 
-            hand_length = data['action'].shape[-1] - action_index
+            hand_length = self.action_command_dim - action_index
             if hand_length > 0:
                 if self.use_left_hand:
                     if self.use_right_hand:
@@ -457,9 +559,12 @@ class BaeRobomimicReplayDataset(BaseImageDataset):
                 else:
                     # right hand
                     action_relative_hand_R = compute_hand_relative_pose(
-                        pos=data['action'][..., action_index:],
+                        pos=data['action'][..., action_index:self.action_command_dim],
                         base_pos=obs_dict['hand_pose_R'][-1])
                     relative_action_list.append(action_relative_hand_R.astype(np.float32))
+
+            if aux_action is not None:
+                relative_action_list.append(aux_action.astype(np.float32))
 
             data['action'] = np.concatenate(relative_action_list, axis=-1)
 
@@ -500,13 +605,53 @@ def _convert_actions(raw_actions, abs_action, rotation_transformer):
     actions = raw_actions.astype(np.float32)
     return actions
 
+
+def _extract_action_target_obs(
+        demo,
+        key,
+        history_index=-1,
+        shift=0,
+        components=None):
+    if 'obs' not in demo or key not in demo['obs']:
+        raise KeyError(f"Missing action target obs key: obs/{key}")
+
+    target = demo['obs'][key][:].astype(np.float32)
+    if target.ndim == 3:
+        target = target[..., int(history_index)]
+    elif target.ndim == 1:
+        target = target[:, None]
+    elif target.ndim > 3:
+        target = target.reshape(target.shape[0], -1)
+
+    if components is not None:
+        components = [int(x) for x in components]
+        max_component = max(components) if len(components) > 0 else -1
+        if max_component >= target.shape[-1]:
+            raise ValueError(
+                f"action_target_obs_components {components} exceed "
+                f"{key} target dim {target.shape[-1]}")
+        target = target[:, components]
+
+    shift = int(shift)
+    if shift != 0:
+        indices = np.arange(target.shape[0]) + shift
+        indices = np.clip(indices, 0, target.shape[0] - 1)
+        target = target[indices]
+
+    return target.astype(np.float32)
+
 # hdf5 -> zarr
 def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, rotation_transformer, 
+        action_target_obs_keys=None,
+        action_target_obs_history_index=-1,
+        action_target_obs_shift=0,
+        action_target_obs_components=None,
         n_workers=None, max_inflight_tasks=None):
     if n_workers is None:
         n_workers = multiprocessing.cpu_count()
     if max_inflight_tasks is None:
         max_inflight_tasks = n_workers * 5
+    action_target_obs_keys = _as_list(action_target_obs_keys)
 
     # parse shape_meta
     rgb_keys = list()
@@ -552,14 +697,33 @@ def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, ro
             this_data = list()
             for i in range(len(demos)):
                 demo = demos[f'demo_{i}']
-                this_data.append(demo[data_key][:].astype(np.float32))
+                if key == 'action':
+                    action_data = _convert_actions(
+                        raw_actions=demo[data_key][:].astype(np.float32),
+                        abs_action=abs_action,
+                        rotation_transformer=rotation_transformer
+                    )
+                    action_targets = list()
+                    for target_key in action_target_obs_keys:
+                        action_targets.append(_extract_action_target_obs(
+                            demo=demo,
+                            key=target_key,
+                            history_index=action_target_obs_history_index,
+                            shift=action_target_obs_shift,
+                            components=action_target_obs_components))
+                    if len(action_targets) > 0:
+                        for target in action_targets:
+                            if target.shape[0] != action_data.shape[0]:
+                                raise ValueError(
+                                    f"Action target length mismatch in demo_{i}: "
+                                    f"actions={action_data.shape[0]}, target={target.shape[0]}")
+                        action_data = np.concatenate(
+                            [action_data] + action_targets, axis=-1)
+                    this_data.append(action_data.astype(np.float32))
+                else:
+                    this_data.append(demo[data_key][:].astype(np.float32))
             this_data = np.concatenate(this_data, axis=0)
             if key == 'action':
-                this_data = _convert_actions(
-                    raw_actions=this_data,
-                    abs_action=abs_action,
-                    rotation_transformer=rotation_transformer
-                )
                 assert this_data.shape == (n_steps,) + tuple(shape_meta['action']['shape'])
             else:
                 # if 'quat' in key:

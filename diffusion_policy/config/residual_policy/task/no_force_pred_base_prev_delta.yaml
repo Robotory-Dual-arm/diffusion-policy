@@ -1,0 +1,78 @@
+# @package task
+name: no_force_pred_base_prev_delta
+
+dataset_path: data/outputs/residual_policy/data/fast/slow_pred_base/no_force_pred_base_residual.hdf5
+slow_ckpt_path: data/outputs/residual_policy/slow/no_force/slow_no_force.ckpt
+
+image_shape: [3, 224, 224]
+low_dim_obs_horizon: 1
+img_obs_horizon: 1
+action_horizon: 1
+step_low_dim_keys: [prev_residual_delta6]
+
+fast_force_encoder:
+  freeze_force_encoder: False
+  train_force_encoder: True
+  force_encoder_cfg:
+    model_name: causalconv
+    feature_dim: 512
+
+shape_meta: &shape_meta
+  obs:
+    image0:
+      shape: [3, 224, 224]
+      type: rgb
+      horizon: ${task.img_obs_horizon}
+
+    robot_pose_R:
+      shape: [3]
+      type: low_dim
+      horizon: ${task.low_dim_obs_horizon}
+
+    robot_quat_R:
+      shape: [4]
+      type: low_dim
+      horizon: ${task.low_dim_obs_horizon}
+      rotation_rep: rotation_6d
+
+    wrench_wrist_R:
+      shape: [6, 32]
+      type: wrench
+
+    base_action_rel:
+      shape: [9]
+      type: low_dim
+      horizon: ${task.low_dim_obs_horizon}
+
+    prev_residual_delta6:
+      shape: [6]
+      type: low_dim
+      horizon: ${task.low_dim_obs_horizon}
+
+  action:
+    shape: [6]
+    horizon: ${task.action_horizon}
+
+pose_repr: &pose_repr
+  obs_pose_repr: abs
+  action_pose_repr: residual_delta6_slow_pred_to_virtual
+
+env_runner:
+  _target_: diffusion_policy.env_runner.real_pusht_image_runner.RealPushTImageRunner
+
+dataset:
+  _target_: diffusion_policy.residual_policy.step_dataset.FastResidualContextStepDataset
+  shape_meta: *shape_meta
+  dataset_path: ${task.dataset_path}
+  base_action_key: base_action_rel
+  base_action_source_key: obs/slow_pred_action_rel
+  base_action_abs_source_key: obs/slow_pred_target_abs
+  action_key: obs/residual_delta6_slow_pred_to_virtual
+  prev_action_key: prev_residual_delta6
+  action_target_shift: 1
+  base_action_target_shift: 1
+  n_obs_steps: ${dataset_obs_steps}
+  use_cache: False
+  seed: 42
+  val_ratio: 0.03
+  pose_repr: *pose_repr

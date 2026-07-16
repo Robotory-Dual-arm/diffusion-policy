@@ -96,6 +96,16 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         action_shape = shape_meta['action']['shape']   
         assert len(action_shape) == 1   # (shape,) 
         action_dim = action_shape[0]   # shape (scalar)
+        action_aux_dim = int(shape_meta['action'].get('aux_dim', 0))
+        action_command_dim = int(
+            shape_meta['action'].get('command_dim', action_dim - action_aux_dim))
+        if action_aux_dim == 0:
+            action_aux_dim = action_dim - action_command_dim
+        if action_command_dim < 0 or action_aux_dim < 0 \
+                or action_command_dim + action_aux_dim != action_dim:
+            raise ValueError(
+                f"Invalid action split: command_dim={action_command_dim}, "
+                f"aux_dim={action_aux_dim}, action_dim={action_dim}")
         obs_shape_meta = shape_meta['obs']
         # obs의 종류에 이중 뭐가 있는지 찾기
         obs_config = {
@@ -353,6 +363,8 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         self.force_obs_steps = force_obs_steps
         self.obs_feature_dim = obs_feature_dim
         self.action_dim = action_dim
+        self.action_command_dim = action_command_dim
+        self.action_aux_dim = action_aux_dim
         self.n_action_steps = n_action_steps
         self.n_obs_steps = n_obs_steps
         self.obs_as_global_cond = obs_as_global_cond
@@ -588,12 +600,17 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         # get action
         start = To - 1
         end = start + self.n_action_steps
-        action = action_pred[:,start:end]
+        action_with_aux = action_pred[:,start:end]
+        action = action_with_aux[..., :self.action_command_dim]
         
         result = {
             'action': action,
+            'action_with_aux': action_with_aux,
             'action_pred': action_pred
         }
+        if self.action_aux_dim > 0:
+            result['force'] = action_with_aux[..., self.action_command_dim:]
+            result['force_pred'] = action_pred[..., self.action_command_dim:]
         return result
 
     # ========= training  ============

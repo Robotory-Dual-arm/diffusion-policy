@@ -1,0 +1,77 @@
+# @package task
+name: insert_box_hand_force_pred_base
+
+dataset_path: data/outputs/2026.07.15_residual_policy/data/insert_box_hand_pred_base_residual.hdf5
+slow_ckpt_path: data/outputs/2026.07.15_residual_policy/insert_box_slow_policy/epoch=0900-train_loss=0.003.ckpt
+
+image_shape: [3, 224, 224]
+low_dim_obs_horizon: 1
+img_obs_horizon: 1
+action_horizon: 1
+
+# Reuse the frozen wrist-force encoder learned by the slow policy.
+fast_force_encoder:
+  freeze_force_encoder: True
+  train_force_encoder: False
+  force_encoder_cfg: null
+
+shape_meta: &shape_meta
+  obs:
+    image0:
+      shape: [3, 224, 224]
+      type: rgb
+      horizon: ${task.img_obs_horizon}
+
+    robot_pose_R:
+      shape: [3]
+      type: low_dim
+      horizon: ${task.low_dim_obs_horizon}
+
+    robot_quat_R:
+      shape: [4]
+      type: low_dim
+      horizon: ${task.low_dim_obs_horizon}
+      rotation_rep: rotation_6d
+
+    hand_pose_R:
+      shape: [7]
+      type: low_dim
+      horizon: ${task.low_dim_obs_horizon}
+
+    wrench_wrist_R:
+      shape: [6, 32]
+      type: wrench
+
+    # Only the slow EE pose is exposed to the fast policy. Slow hand7 is never
+    # part of the residual target and passes through unchanged at execution.
+    base_action_rel:
+      shape: [9]
+      type: low_dim
+      horizon: ${task.low_dim_obs_horizon}
+
+  action:
+    shape: [6]
+    horizon: ${task.action_horizon}
+
+pose_repr: &pose_repr
+  obs_pose_repr: abs
+  action_pose_repr: residual_delta6_slow_pred_to_virtual
+
+env_runner:
+  _target_: diffusion_policy.env_runner.real_pusht_image_runner.RealPushTImageRunner
+
+dataset:
+  _target_: diffusion_policy.residual_policy.step_dataset.FastResidualContextStepDataset
+  shape_meta: *shape_meta
+  dataset_path: ${task.dataset_path}
+  base_action_key: base_action_rel
+  base_action_source_key: obs/slow_pred_action_rel
+  base_action_abs_source_key: obs/slow_pred_target_abs
+  action_key: obs/residual_delta6_slow_pred_to_virtual
+  action_target_shift: 1
+  base_action_target_shift: 1
+  n_obs_steps: ${dataset_obs_steps}
+  use_cache: False
+  seed: 42
+  val_ratio: 0.03
+  pose_repr: *pose_repr
